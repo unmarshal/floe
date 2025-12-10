@@ -1,0 +1,13 @@
+# Idris 2 build artifacts
+build/
+*.ttc
+*.ttm
+
+# Editor files
+*.swp
+*~
+.idea/
+.vscode/
+
+# OS files
+.DS_Store
