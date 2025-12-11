@@ -159,15 +159,47 @@
         },
         {
           "type": "STRING",
-          "value": "Int"
-        },
-        {
-          "type": "STRING",
-          "value": "Float"
-        },
-        {
-          "type": "STRING",
           "value": "Bool"
+        },
+        {
+          "type": "STRING",
+          "value": "Int8"
+        },
+        {
+          "type": "STRING",
+          "value": "Int16"
+        },
+        {
+          "type": "STRING",
+          "value": "Int32"
+        },
+        {
+          "type": "STRING",
+          "value": "Int64"
+        },
+        {
+          "type": "STRING",
+          "value": "UInt8"
+        },
+        {
+          "type": "STRING",
+          "value": "UInt16"
+        },
+        {
+          "type": "STRING",
+          "value": "UInt32"
+        },
+        {
+          "type": "STRING",
+          "value": "UInt64"
+        },
+        {
+          "type": "STRING",
+          "value": "Float32"
+        },
+        {
+          "type": "STRING",
+          "value": "Float64"
         }
       ]
     },

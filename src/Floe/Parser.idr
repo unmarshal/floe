@@ -510,8 +510,20 @@ mutual
   pType st = do
     (name, st') <- pIdent st
     case name of
-      "Int"    => Right (SInt, st')
-      "Float"  => Right (SFloat, st')
+      -- Signed integers
+      "Int8"   => Right (SInt8, st')
+      "Int16"  => Right (SInt16, st')
+      "Int32"  => Right (SInt32, st')
+      "Int64"  => Right (SInt64, st')
+      -- Unsigned integers
+      "UInt8"  => Right (SUInt8, st')
+      "UInt16" => Right (SUInt16, st')
+      "UInt32" => Right (SUInt32, st')
+      "UInt64" => Right (SUInt64, st')
+      -- Floats
+      "Float32" => Right (SFloat32, st')
+      "Float64" => Right (SFloat64, st')
+      -- Decimal with precision and scale
       "Decimal" => do
         -- Decimal(precision, scale)
         ((), st'') <- expect TLParen st'
@@ -635,6 +647,12 @@ mutual
       TIdent "False" =>
         -- Boolean literal False
         Right (SBoolLit tok.span False, advanceP st)
+      TIdent "cast" => do
+        -- cast Type .col - cast with type argument (supports Decimal(p,s))
+        let st = advanceP st  -- skip 'cast'
+        (ty, st) <- pType st  -- parse the full type (e.g., Float, Decimal(10,2))
+        (arg, st) <- pColRef st   -- parse the column reference
+        Right (SBuiltinApp tok.span (BCast ty) arg, st)
       TIdent name =>
         -- Check if followed by a dot (column ref) -> function/builtin application
         let st' = advanceP st  -- skip identifier
@@ -945,7 +963,7 @@ pBuiltinCall st = do
     "trim" => Right (BTrim, st)
     "lenChars" => Right (BLenChars, st)
     "cast" => do
-      (ty, st) <- pIdent st
+      (ty, st) <- pType st
       Right (BCast ty, st)
     _ => Left (ParseError sp ("Unknown builtin: " ++ name))
 
@@ -1071,11 +1089,19 @@ pBindingType st = do
       -- It's a simple type (constant)
       case parsePrimTy firstTy of
         Just ty => Right (SBTyConst ty, st')
-        Nothing => Left (ParseError (currentTok st).span ("Unknown type: " ++ firstTy ++ ". Expected Int, Float, String, or Bool"))
+        Nothing => Left (ParseError (currentTok st).span ("Unknown type: " ++ firstTy ++ ". Expected Int64, Float64, String, Bool, etc."))
   where
     parsePrimTy : String -> Maybe STy
-    parsePrimTy "Int" = Just SInt
-    parsePrimTy "Float" = Just SFloat
+    parsePrimTy "Int8" = Just SInt8
+    parsePrimTy "Int16" = Just SInt16
+    parsePrimTy "Int32" = Just SInt32
+    parsePrimTy "Int64" = Just SInt64
+    parsePrimTy "UInt8" = Just SUInt8
+    parsePrimTy "UInt16" = Just SUInt16
+    parsePrimTy "UInt32" = Just SUInt32
+    parsePrimTy "UInt64" = Just SUInt64
+    parsePrimTy "Float32" = Just SFloat32
+    parsePrimTy "Float64" = Just SFloat64
     parsePrimTy "String" = Just SString
     parsePrimTy "Bool" = Just SBool
     parsePrimTy _ = Nothing

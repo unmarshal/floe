@@ -82,8 +82,8 @@ let t : A -> B = select [a, c]
 testElabMap : TestResult
 testElabMap =
   let src = """
-schema A { x: String, y: Int, }
-schema B { a: String, b: Int, }
+schema A { x: String, y: Int64, }
+schema B { a: String, b: Int64, }
 let t : A -> B = map { a: .x, b: .y }
 """
   in case elabCheck src of
@@ -93,7 +93,7 @@ let t : A -> B = map { a: .x, b: .y }
 testElabChain : TestResult
 testElabChain =
   let src = """
-schema A { old: String, extra: Int, }
+schema A { old: String, extra: Int64, }
 schema B { new: String, }
 let t : A -> B = rename old new >> drop [extra]
 """
@@ -176,7 +176,7 @@ let t : A -> B = select [x]
 testElabJoinTypeMismatch : TestResult
 testElabJoinTypeMismatch =
   let src = """
-schema User { id: Int, name: String, }
+schema User { id: Int64, name: String, }
 schema Order { oid: String, user_id: String, }
 schema R { oid: String, name: String, }
 let users = read "users.parquet" as User
@@ -246,8 +246,8 @@ let t : A -> B = join nonexistent on .x == .x
 testElabFilterIntComparison : TestResult
 testElabFilterIntComparison =
   let src = """
-schema A { age: Int, name: String, }
-schema B { age: Int, name: String, }
+schema A { age: Int64, name: String, }
+schema B { age: Int64, name: String, }
 let t : A -> B = filter .age > 18
 """
   in case elabCheck src of
@@ -268,8 +268,8 @@ let t : A -> B = filter .status == "active"
 testElabFilterColumnComparison : TestResult
 testElabFilterColumnComparison =
   let src = """
-schema A { x: Int, y: Int, }
-schema B { x: Int, y: Int, }
+schema A { x: Int64, y: Int64, }
+schema B { x: Int64, y: Int64, }
 let t : A -> B = filter .x < .y
 """
   in case elabCheck src of
@@ -301,8 +301,8 @@ let t : A -> B = filter .age > 18
 testElabFilterColumnComparisonTypeMismatch : TestResult
 testElabFilterColumnComparisonTypeMismatch =
   let src = """
-schema A { x: Int, y: String, }
-schema B { x: Int, y: String, }
+schema A { x: Int64, y: String, }
+schema B { x: Int64, y: String, }
 let t : A -> B = filter .x == .y
 """
   in case elabExpectError src "same type" of
@@ -316,9 +316,9 @@ let t : A -> B = filter .x == .y
 testElabConstantInt : TestResult
 testElabConstantInt =
   let src = """
-let minAge : Int = 18
-schema A { age: Int, }
-schema B { age: Int, }
+let minAge : Int64 = 18
+schema A { age: Int64, }
+schema B { age: Int64, }
 let t : A -> B = filter .age >= minAge
 """
   in case elabCheck src of
@@ -328,9 +328,9 @@ let t : A -> B = filter .age >= minAge
 testElabConstantFloat : TestResult
 testElabConstantFloat =
   let src = """
-let taxRate : Float = 0.08
-schema A { price: Float, }
-schema B { total: Float, }
+let taxRate : Float64 = 0.08
+schema A { price: Float64, }
+schema B { total: Float64, }
 let t : A -> B = map { total: .price * taxRate }
 """
   in case elabCheck src of
@@ -365,8 +365,8 @@ testElabConstantTypeMismatch : TestResult
 testElabConstantTypeMismatch =
   let src = """
 let minAge : String = "eighteen"
-schema A { age: Int, }
-schema B { age: Int, }
+schema A { age: Int64, }
+schema B { age: Int64, }
 let t : A -> B = filter .age >= minAge
 """
   in case elabExpectError src "type" of
@@ -376,8 +376,8 @@ let t : A -> B = filter .age >= minAge
 testElabConstantUndefined : TestResult
 testElabConstantUndefined =
   let src = """
-schema A { age: Int, }
-schema B { age: Int, }
+schema A { age: Int64, }
+schema B { age: Int64, }
 let t : A -> B = filter .age >= unknownConst
 """
   in case elabExpectError src "Unknown constant" of
@@ -387,8 +387,8 @@ let t : A -> B = filter .age >= unknownConst
 testElabConstantInIfCondition : TestResult
 testElabConstantInIfCondition =
   let src = """
-let threshold : Int = 100
-schema A { value: Int, }
+let threshold : Int64 = 100
+schema A { value: Int64, }
 schema B { category: String, }
 let t : A -> B = map { category: if .value >= threshold then "high" else "low" }
 """
@@ -399,13 +399,100 @@ let t : A -> B = map { category: if .value >= threshold then "high" else "low" }
 testElabBoolLiterals : TestResult
 testElabBoolLiterals =
   let src = """
-schema A { age: Int, }
+schema A { age: Int64, }
 schema B { isAdult: Bool, }
 let t : A -> B = map { isAdult: if .age >= 18 then True else False }
 """
   in case elabCheck src of
        Right () => pass "elab bool literals True/False"
        Left e => fail "elab bool literals True/False" e
+
+-----------------------------------------------------------
+-- Cast and Numeric Type Tests
+-----------------------------------------------------------
+
+-- Note: Transform currently doesn't track type changes in the schema.
+-- These tests verify that cast column functions are registered correctly,
+-- but the output schema must match the input schema type.
+-- Type-changing casts work at runtime but aren't reflected in schema types.
+
+testElabCastInMap : TestResult
+testElabCastInMap =
+  let src = """
+schema A { value: Int64, }
+schema B { asFloat: Float64, }
+let t : A -> B = map { asFloat: cast Float64 .value }
+"""
+  in case elabCheck src of
+       Right () => pass "elab cast in map expression"
+       Left e => fail "elab cast in map expression" e
+
+testElabCastToDecimal : TestResult
+testElabCastToDecimal =
+  let src = """
+schema A { value: Float64, }
+schema B { amount: Decimal(10, 2), }
+let t : A -> B = map { amount: cast Decimal(10, 2) .value }
+"""
+  in case elabCheck src of
+       Right () => pass "elab cast to Decimal(p,s)"
+       Left e => fail "elab cast to Decimal(p,s)" e
+
+testElabCastColumnFnDefined : TestResult
+testElabCastColumnFnDefined =
+  let src = """
+schema A { value: String, }
+schema B { value: String, }
+let toUpper : String -> String = toUppercase
+let t : A -> B = transform [value] toUpper
+"""
+  in case elabCheck src of
+       Right () => pass "elab column function defined"
+       Left e => fail "elab column function defined" e
+
+testElabDecimalArithmetic : TestResult
+testElabDecimalArithmetic =
+  let src = """
+schema A { amount: Decimal(10, 2), rate: Decimal(5, 4), }
+schema B { total: Decimal(10, 2), }
+let t : A -> B = map { total: .amount * .rate }
+"""
+  in case elabCheck src of
+       Right () => pass "elab decimal arithmetic"
+       Left e => fail "elab decimal arithmetic" e
+
+testElabFloatDecimalMixError : TestResult
+testElabFloatDecimalMixError =
+  let src = """
+schema A { amount: Decimal(10, 2), rate: Float64, }
+schema B { total: Float64, }
+let t : A -> B = map { total: .amount * .rate }
+"""
+  in case elabExpectError src "different types" of
+       Right () => pass "elab error: Float/Decimal mix rejected"
+       Left e => fail "elab error: Float/Decimal mix rejected" e
+
+testElabIntDecimalMixError : TestResult
+testElabIntDecimalMixError =
+  let src = """
+schema A { amount: Decimal(10, 2), count: Int64, }
+schema B { total: Decimal(10, 2), }
+let t : A -> B = map { total: .amount * .count }
+"""
+  in case elabExpectError src "different types" of
+       Right () => pass "elab error: Int/Decimal mix rejected"
+       Left e => fail "elab error: Int/Decimal mix rejected" e
+
+testElabDecimalLiteralCoercion : TestResult
+testElabDecimalLiteralCoercion =
+  let src = """
+schema A { amount: Decimal(10, 2), }
+schema B { doubled: Decimal(10, 2), }
+let t : A -> B = map { doubled: .amount * 2 }
+"""
+  in case elabCheck src of
+       Right () => pass "elab decimal literal coercion"
+       Left e => fail "elab decimal literal coercion" e
 
 -----------------------------------------------------------
 -- Test Suite
@@ -446,4 +533,12 @@ elaborateTests = suite "Elaborate Tests"
   , testElabConstantUndefined
   , testElabConstantInIfCondition
   , testElabBoolLiterals
+  -- Cast and numeric type tests
+  , testElabCastInMap
+  , testElabCastToDecimal
+  , testElabCastColumnFnDefined
+  , testElabDecimalArithmetic
+  , testElabFloatDecimalMixError
+  , testElabIntDecimalMixError
+  , testElabDecimalLiteralCoercion
   ]

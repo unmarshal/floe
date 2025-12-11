@@ -1,0 +1,25 @@
+-- Test cast expressions
+
+schema Input {
+    intValue: Int64,
+    floatValue: Float64,
+    stringValue: String,
+}
+
+schema Output {
+    asFloat: Float64,
+    asInt: Int64,
+    asString: String,
+}
+
+let convertTypes : Input -> Output =
+    map {
+        asFloat: cast Float64 .intValue,
+        asInt: cast Int64 .floatValue,
+        asString: cast String .intValue
+    }
+
+main =
+    read "input.parquet" as Input
+    |> convertTypes
+    sink "output.parquet"

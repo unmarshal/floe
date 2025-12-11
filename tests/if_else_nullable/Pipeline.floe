@@ -1,13 +1,13 @@
 -- Test if-then-else with nullable columns in condition
 
 schema Input {
-    id: Int,
-    maybe_value: Maybe Int,
+    id: Int64,
+    maybe_value: Maybe Int64,
     label: String,
 }
 
 schema Output {
-    id: Int,
+    id: Int64,
     category: Maybe String,
 }
 

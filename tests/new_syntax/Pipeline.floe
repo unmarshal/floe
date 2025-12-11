@@ -2,14 +2,14 @@
 
 schema Input {
     name: String,
-    age: Int,
-    score: Float,
+    age: Int64,
+    score: Float64,
 }
 
 schema Output {
     name: String,
-    age: Int,
-    doubleAge: Int,
+    age: Int64,
+    doubleAge: Int64,
 }
 
 -- Constant with explicit type

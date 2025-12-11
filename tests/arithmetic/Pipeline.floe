@@ -2,16 +2,16 @@
 
 schema Product {
     name: String,
-    price: Int,
-    quantity: Int,
-    discount: Int,
+    price: Int64,
+    quantity: Int64,
+    discount: Int64,
 }
 
 schema OrderSummary {
     name: String,
-    total: Int,
-    discounted_price: Int,
-    profit_margin: Int,
+    total: Int64,
+    discounted_price: Int64,
+    profit_margin: Int64,
 }
 
 let calculateTotals : Product -> OrderSummary =

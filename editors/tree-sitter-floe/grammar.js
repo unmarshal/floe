@@ -34,7 +34,24 @@ module.exports = grammar({
     type: ($) =>
       choice($.simple_type, $.maybe_type, $.list_type, $.decimal_type),
 
-    simple_type: ($) => choice("String", "Int", "Float", "Bool"),
+    simple_type: ($) =>
+      choice(
+        "String",
+        "Bool",
+        // Signed integers
+        "Int8",
+        "Int16",
+        "Int32",
+        "Int64",
+        // Unsigned integers
+        "UInt8",
+        "UInt16",
+        "UInt32",
+        "UInt64",
+        // Floats
+        "Float32",
+        "Float64",
+      ),
 
     maybe_type: ($) => seq("Maybe", $.type),
 

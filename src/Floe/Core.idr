@@ -66,10 +66,10 @@ data FilterExpr : Schema -> Type where
                -> (0 prf1 : HasCol s col1 t) -> (0 prf2 : HasCol s col2 t) -> FilterExpr s
   -- Comparison with integer literal
   FCompareInt : (col : String) -> (op : CmpOp) -> (val : Integer)
-              -> (0 prf : HasCol s col TInt) -> FilterExpr s
+              -> (0 prf : HasCol s col TInt64) -> FilterExpr s
   -- Comparison with integer literal (nullable column)
   FCompareIntMaybe : (col : String) -> (op : CmpOp) -> (val : Integer)
-              -> (0 prf : HasCol s col (TMaybe TInt)) -> FilterExpr s
+              -> (0 prf : HasCol s col (TMaybe TInt64)) -> FilterExpr s
   -- Comparison with a constant reference (for typed constants like maxAge)
   FCompareConst : (col : String) -> (op : CmpOp) -> (constName : String) -> (constTy : Ty)
                -> (0 prf : HasCol s col constTy) -> FilterExpr s
@@ -89,10 +89,10 @@ data MapExpr : Schema -> Ty -> Type where
   MCol : (col : String) -> (0 prf : HasCol s col t) -> MapExpr s t
   -- String literal
   MStrLit : String -> MapExpr s TString
-  -- Integer literal
-  MIntLit : Integer -> MapExpr s TInt
-  -- Float literal
-  MFloatLit : Double -> MapExpr s TFloat
+  -- Integer literal (defaults to Int64)
+  MIntLit : Integer -> MapExpr s TInt64
+  -- Float literal (defaults to Float64)
+  MFloatLit : Double -> MapExpr s TFloat64
   -- Bool literal
   MBoolLit : Bool -> MapExpr s TBool
   -- Constant reference (variable name and its type)

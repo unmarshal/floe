@@ -96,7 +96,7 @@ main =
     write "output.parquet"
 
 -- Typed constants
-let minPrice : Int = 100
+let minPrice : Int64 = 100
 
 -- Column functions (scalar transformers)
 let normalizeUrl : String -> String = trim >> toLowercase >> stripPrefix "https://"
@@ -104,7 +104,7 @@ let normalizeUrl : String -> String = trim >> toLowercase >> stripPrefix "https:
 -- Conditional expressions in map
 schema Product {
     name: String,
-    price: Int,
+    price: Int64,
     in_stock: Bool,
 }
 
@@ -152,11 +152,48 @@ All bindings use the unified syntax `let name : Type = value`:
 - `trim` - whitespace removal
 - `lenChars` - string length
 - `replace` - string replacement
-- `cast` - type casting
+- `cast Type` - type casting (used in map expressions)
+
+### Cast
+
+Use `cast` in map expressions to convert between types:
+
+```haskell
+schema Input {
+    value: String,
+    amount: Int32,
+}
+
+schema Output {
+    value_float: Float64,
+    value_decimal: Decimal(10, 2),
+    amount_64: Int64,
+}
+
+let convert : Input -> Output =
+    map {
+        value_float: cast Float64 .value,
+        value_decimal: cast Decimal(10, 2) .value,
+        amount_64: cast Int64 .amount
+    }
+```
+
+Supported cast targets: all numeric types (`Int8`-`Int64`, `UInt8`-`UInt64`, `Float32`, `Float64`), `Decimal(p, s)`, `String`, and `Bool`.
 
 ### Types
 
-`Int`, `Float`, `Decimal(precision, scale)`, `String`, `Bool`, `List T`, `Maybe T`
+| Type | Description |
+|------|-------------|
+| `String` | Text data |
+| `Int8`, `Int16`, `Int32`, `Int64` | Signed integers |
+| `UInt8`, `UInt16`, `UInt32`, `UInt64` | Unsigned integers |
+| `Float32`, `Float64` | Floating point |
+| `Bool` | Boolean values |
+| `Decimal(p, s)` | Fixed-point decimal with precision `p` and scale `s` |
+| `Maybe T` | Nullable version of type `T` |
+| `List T` | List of type `T` |
+
+Integer and float literals default to `Int64` and `Float64` respectively.
 
 ### Decimal Type
 
@@ -231,10 +268,10 @@ data FilterExpr : Schema -> Type where
                -> (0 prf1 : HasCol s col1 t) -> (0 prf2 : HasCol s col2 t) -> FilterExpr s
   -- Column vs integer: .age > 18
   FCompareInt : (col : String) -> (op : CmpOp) -> (val : Integer)
-              -> (0 prf : HasCol s col TInt) -> FilterExpr s
+              -> (0 prf : HasCol s col TInt64) -> FilterExpr s
   -- Column vs integer (nullable): .maybe_age > 18
   FCompareIntMaybe : (col : String) -> (op : CmpOp) -> (val : Integer)
-              -> (0 prf : HasCol s col (TMaybe TInt)) -> FilterExpr s
+              -> (0 prf : HasCol s col (TMaybe TInt64)) -> FilterExpr s
   -- Column vs typed constant: .age >= minAge
   FCompareConst : (col : String) -> (op : CmpOp) -> (constName : String) -> (constTy : Ty)
                -> (0 prf : HasCol s col constTy) -> FilterExpr s
@@ -253,8 +290,8 @@ data MapExpr : Schema -> Ty -> Type where
   MCol : (col : String) -> (0 prf : HasCol s col t) -> MapExpr s t
   -- Literals
   MStrLit : String -> MapExpr s TString
-  MIntLit : Integer -> MapExpr s TInt
-  MFloatLit : Double -> MapExpr s TFloat
+  MIntLit : Integer -> MapExpr s TInt64
+  MFloatLit : Double -> MapExpr s TFloat64
   MBoolLit : Bool -> MapExpr s TBool
   -- Constant reference (looks up typed constant from context)
   MConstRef : (name : String) -> (ty : Ty) -> MapExpr s ty

@@ -1054,11 +1054,27 @@
     "named": false
   },
   {
-    "type": "Float",
+    "type": "Float32",
     "named": false
   },
   {
-    "type": "Int",
+    "type": "Float64",
+    "named": false
+  },
+  {
+    "type": "Int16",
+    "named": false
+  },
+  {
+    "type": "Int32",
+    "named": false
+  },
+  {
+    "type": "Int64",
+    "named": false
+  },
+  {
+    "type": "Int8",
     "named": false
   },
   {
@@ -1075,6 +1091,22 @@
   },
   {
     "type": "True",
+    "named": false
+  },
+  {
+    "type": "UInt16",
+    "named": false
+  },
+  {
+    "type": "UInt32",
+    "named": false
+  },
+  {
+    "type": "UInt64",
+    "named": false
+  },
+  {
+    "type": "UInt8",
     "named": false
   },
   {

@@ -63,17 +63,20 @@ make test
 
 ## Types
 
-Floe supports the following column types:
+Floe supports the following column types, matching Polars exactly:
 
 | Type | Description |
 |------|-------------|
 | `String` | Text data |
-| `Int` | 64-bit integers |
-| `Float` | 64-bit floating point |
+| `Int8`, `Int16`, `Int32`, `Int64` | Signed integers |
+| `UInt8`, `UInt16`, `UInt32`, `UInt64` | Unsigned integers |
+| `Float32`, `Float64` | Floating point |
 | `Bool` | Boolean values |
 | `Decimal(p, s)` | Fixed-point decimal with precision `p` and scale `s` |
 | `Maybe T` | Nullable version of type `T` |
 | `List T` | List of type `T` |
+
+Integer and float literals in Floe default to `Int64` and `Float64` respectively.
 
 ### Decimal for Currency
 
@@ -126,7 +129,7 @@ let cleanUser : RawUser -> User =
     drop [is_active]
 
 -- Constant: typed value usable in expressions
-let minAge : Int = 18
+let minAge : Int64 = 18
 
 -- Column function: scalar transformer using builtins
 let normalize : String -> String = trim >> toLowercase
@@ -194,7 +197,24 @@ Builtins can be chained: `trim >> toLowercase >> stripPrefix "https://"`
 | `replace` | Replace substring |
 | `stripPrefix` | Remove prefix if present |
 | `stripSuffix` | Remove suffix if present |
-| `cast` | Type conversion |
+| `cast Type` | Type conversion (e.g., `cast Float64 .intCol`) |
+
+### Cast
+
+Use `cast` in map expressions to convert between types:
+
+```haskell
+schema Input { value: Int64, }
+schema Output { asFloat: Float64, asDecimal: Decimal(10, 2), }
+
+let convert : Input -> Output =
+    map {
+        asFloat: cast Float64 .value,
+        asDecimal: cast Decimal(10, 2) .value
+    }
+```
+
+Supported target types: all numeric types (`Int8`-`Int64`, `UInt8`-`UInt64`, `Float32`, `Float64`, `Decimal(p,s)`), `String`, `Bool`.
 
 ## Not a General-Purpose Language
 

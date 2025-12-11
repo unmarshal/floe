@@ -2,12 +2,12 @@
 
 schema Input {
     name: String,
-    age: Int,
+    age: Int64,
 }
 
 schema Output {
     name: String,
-    age: Int,
+    age: Int64,
 }
 
 let transform : Input -> Output = select [name, age]

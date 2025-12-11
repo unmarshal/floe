@@ -75,8 +75,16 @@ lookupConstant nm ctx = lookup nm ctx.constants
 -- Returns Nothing if it's a schema name (not a scalar type)
 parseScalarTy : String -> Maybe Ty
 parseScalarTy "String" = Just TString
-parseScalarTy "Int" = Just TInt
-parseScalarTy "Float" = Just TFloat
+parseScalarTy "Int8" = Just TInt8
+parseScalarTy "Int16" = Just TInt16
+parseScalarTy "Int32" = Just TInt32
+parseScalarTy "Int64" = Just TInt64
+parseScalarTy "UInt8" = Just TUInt8
+parseScalarTy "UInt16" = Just TUInt16
+parseScalarTy "UInt32" = Just TUInt32
+parseScalarTy "UInt64" = Just TUInt64
+parseScalarTy "Float32" = Just TFloat32
+parseScalarTy "Float64" = Just TFloat64
 parseScalarTy "Bool" = Just TBool
 parseScalarTy _ = Nothing  -- Probably a schema name
 
@@ -227,11 +235,20 @@ validateMapSources span s (PFExpr _ _ :: rest) =
 
 -- Determine output type of a builtin application
 builtinOutputTy : BuiltinCall -> Ty -> Ty
-builtinOutputTy BLenChars _ = TInt  -- len_chars always returns int
-builtinOutputTy (BCast "Int") _ = TInt
-builtinOutputTy (BCast "Float") _ = TFloat
-builtinOutputTy (BCast "String") _ = TString
-builtinOutputTy (BCast "Bool") _ = TBool
+builtinOutputTy BLenChars _ = TInt64  -- len_chars always returns int
+builtinOutputTy (BCast SInt8) _ = TInt8
+builtinOutputTy (BCast SInt16) _ = TInt16
+builtinOutputTy (BCast SInt32) _ = TInt32
+builtinOutputTy (BCast SInt64) _ = TInt64
+builtinOutputTy (BCast SUInt8) _ = TUInt8
+builtinOutputTy (BCast SUInt16) _ = TUInt16
+builtinOutputTy (BCast SUInt32) _ = TUInt32
+builtinOutputTy (BCast SUInt64) _ = TUInt64
+builtinOutputTy (BCast SFloat32) _ = TFloat32
+builtinOutputTy (BCast SFloat64) _ = TFloat64
+builtinOutputTy (BCast SString) _ = TString
+builtinOutputTy (BCast SBool) _ = TBool
+builtinOutputTy (BCast (SDecimal p s)) _ = TDecimal p s
 builtinOutputTy _ t = t  -- Most string builtins preserve type (String -> String)
 
 -- Check if type is nullable (needed for inferExprTy)
@@ -253,8 +270,8 @@ inferExprTy : Context -> Schema -> SExpr -> Ty
 inferExprTy ctx s (SColRef _ col) = getColType s col
 inferExprTy ctx s (SColRefNullCheck _ col) = getColType s col
 inferExprTy ctx s (SStrLit _ _) = TString
-inferExprTy ctx s (SIntLit _ _) = TInt
-inferExprTy ctx s (SFloatLit _ _) = TFloat
+inferExprTy ctx s (SIntLit _ _) = TInt64
+inferExprTy ctx s (SFloatLit _ _) = TFloat64
 inferExprTy ctx s (SBoolLit _ _) = TBool
 inferExprTy ctx s (SVar _ name) =
   -- Look up constant type
@@ -403,12 +420,12 @@ elabFilterExpr ctx span s expr =
             Nothing => err (ParseError span ("Column '" ++ col2 ++ "' must have same type as '" ++ col1 ++ "'"))
             Just prf2 => ok (FCompareCols col1 op col2 prf1 prf2)
     Just (SColRef _ col, op, SIntLit _ val) =>
-      -- .col op integer (try Int first, then Maybe Int)
-      case findColWithTy s col TInt of
+      -- .col op integer (try Int64 first, then Maybe Int64)
+      case findColWithTy s col TInt64 of
         Just prf => ok (FCompareInt col op val prf)
-        Nothing => case findColWithTy s col (TMaybe TInt) of
+        Nothing => case findColWithTy s col (TMaybe TInt64) of
           Just prf => ok (FCompareIntMaybe col op val prf)
-          Nothing => err (ParseError span ("Column '" ++ col ++ "' must be Int or Maybe Int for integer comparison"))
+          Nothing => err (ParseError span ("Column '" ++ col ++ "' must be Int64 or Maybe Int64 for integer comparison"))
     Just (SColRef _ col, op, SStrLit _ val) =>
       -- .col op "string"
       case findCol s col of
@@ -453,8 +470,16 @@ filterExprIsNullable s expr = anyNullable s (filterExprCols expr)
 
 -- Helper for arithmetic elaboration
 isNumericTy : Ty -> Bool
-isNumericTy TInt = True
-isNumericTy TFloat = True
+isNumericTy TInt8 = True
+isNumericTy TInt16 = True
+isNumericTy TInt32 = True
+isNumericTy TInt64 = True
+isNumericTy TUInt8 = True
+isNumericTy TUInt16 = True
+isNumericTy TUInt32 = True
+isNumericTy TUInt64 = True
+isNumericTy TFloat32 = True
+isNumericTy TFloat64 = True
 isNumericTy (TDecimal _ _) = True
 isNumericTy _ = False
 
@@ -466,10 +491,18 @@ applyArithOp AOMul l r = MMul l r
 applyArithOp AODiv l r = MDiv l r
 
 -- Check if two types are compatible for arithmetic
--- Decimals with different precision/scale are compatible
+-- Same exact type required (no implicit widening)
 areArithCompatible : Ty -> Ty -> Bool
-areArithCompatible TInt TInt = True
-areArithCompatible TFloat TFloat = True
+areArithCompatible TInt8 TInt8 = True
+areArithCompatible TInt16 TInt16 = True
+areArithCompatible TInt32 TInt32 = True
+areArithCompatible TInt64 TInt64 = True
+areArithCompatible TUInt8 TUInt8 = True
+areArithCompatible TUInt16 TUInt16 = True
+areArithCompatible TUInt32 TUInt32 = True
+areArithCompatible TUInt64 TUInt64 = True
+areArithCompatible TFloat32 TFloat32 = True
+areArithCompatible TFloat64 TFloat64 = True
 areArithCompatible (TDecimal _ _) (TDecimal _ _) = True
 areArithCompatible _ _ = False
 
@@ -488,12 +521,10 @@ getIntLit (SIntLit _ i) = Just i
 getIntLit _ = Nothing
 
 -- Create a MapExpr for a literal coerced to a given numeric type
--- For Decimal, we use believe_me since the actual value is the same
+-- Integer literals are Int64 by default, coerced to target type at codegen
 coerceLiteral : (s : Schema) -> Integer -> (t : Ty) -> MapExpr s t
-coerceLiteral s i TInt = MIntLit i
-coerceLiteral s i TFloat = believe_me (MIntLit {s} i)  -- Polars handles int -> float
-coerceLiteral s i (TDecimal _ _) = believe_me (MIntLit {s} i)  -- Polars handles int -> decimal
-coerceLiteral s i _ = believe_me (MIntLit {s} i)  -- Fallback
+coerceLiteral s i TInt64 = MIntLit i
+coerceLiteral s i _ = believe_me (MIntLit {s} i)  -- Polars handles coercion
 
 elabArithOp ctx span s op left right = do
   -- Check for literal coercion cases first
@@ -557,10 +588,10 @@ elabMapExpr ctx span s (SVar _ name) =
       in ok (MkMapExprResult ty (MConstRef name ty))
 -- String literal
 elabMapExpr ctx span s (SStrLit _ str) = ok (MkMapExprResult TString (MStrLit str))
--- Integer literal
-elabMapExpr ctx span s (SIntLit _ i) = ok (MkMapExprResult TInt (MIntLit i))
--- Float literal
-elabMapExpr ctx span s (SFloatLit _ f) = ok (MkMapExprResult TFloat (MFloatLit f))
+-- Integer literal (defaults to Int64)
+elabMapExpr ctx span s (SIntLit _ i) = ok (MkMapExprResult TInt64 (MIntLit i))
+-- Float literal (defaults to Float64)
+elabMapExpr ctx span s (SFloatLit _ f) = ok (MkMapExprResult TFloat64 (MFloatLit f))
 -- Boolean literal
 elabMapExpr ctx span s (SBoolLit _ b) = ok (MkMapExprResult TBool (MBoolLit b))
 -- If-then-else

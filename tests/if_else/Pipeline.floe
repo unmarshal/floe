@@ -2,7 +2,7 @@
 
 schema Input {
     status: String,
-    value: Int,
+    value: Int64,
     is_premium: Bool,
 }
 

@@ -32,8 +32,16 @@ joinWith sep (x :: xs) = x ++ sep ++ joinWith sep xs
 -- Int accepts any integer type, Float accepts any float type
 public export
 tyToTypeFamily : Ty -> String
-tyToTypeFamily TInt = "int"
-tyToTypeFamily TFloat = "float"
+tyToTypeFamily TInt8 = "int"
+tyToTypeFamily TInt16 = "int"
+tyToTypeFamily TInt32 = "int"
+tyToTypeFamily TInt64 = "int"
+tyToTypeFamily TUInt8 = "uint"
+tyToTypeFamily TUInt16 = "uint"
+tyToTypeFamily TUInt32 = "uint"
+tyToTypeFamily TUInt64 = "uint"
+tyToTypeFamily TFloat32 = "float"
+tyToTypeFamily TFloat64 = "float"
 tyToTypeFamily (TDecimal p s) = "decimal:" ++ show p ++ ":" ++ show s
 tyToTypeFamily TString = "string"
 tyToTypeFamily TBool = "bool"
@@ -92,7 +100,24 @@ builtinToPolarsWithConsts _ BToLowercase = ".str.to_lowercase()"
 builtinToPolarsWithConsts _ BToUppercase = ".str.to_uppercase()"
 builtinToPolarsWithConsts _ BTrim = ".str.strip_chars()"
 builtinToPolarsWithConsts _ BLenChars = ".str.len_chars()"
-builtinToPolarsWithConsts _ (BCast ty) = ".cast(pl." ++ ty ++ ")"
+builtinToPolarsWithConsts _ (BCast ty) = ".cast(pl." ++ styToPolars ty ++ ")"
+  where
+    styToPolars : STy -> String
+    styToPolars SInt8 = "Int8"
+    styToPolars SInt16 = "Int16"
+    styToPolars SInt32 = "Int32"
+    styToPolars SInt64 = "Int64"
+    styToPolars SUInt8 = "UInt8"
+    styToPolars SUInt16 = "UInt16"
+    styToPolars SUInt32 = "UInt32"
+    styToPolars SUInt64 = "UInt64"
+    styToPolars SFloat32 = "Float32"
+    styToPolars SFloat64 = "Float64"
+    styToPolars SString = "Utf8"
+    styToPolars SBool = "Boolean"
+    styToPolars (SDecimal p s) = "Decimal(precision=" ++ show p ++ ", scale=" ++ show s ++ ")"
+    styToPolars (SList inner) = "List(" ++ styToPolars inner ++ ")"
+    styToPolars (SMaybe inner) = styToPolars inner  -- Polars handles nullability separately
 
 -- Backwards compatible version without constants
 builtinToPolars : BuiltinCall -> String

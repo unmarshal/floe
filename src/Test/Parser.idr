@@ -59,7 +59,7 @@ testParseSchemaWithCols =
   let src = """
 schema User {
     id: String,
-    age: Int,
+    age: Int64,
     active: Bool,
 }
 """
@@ -90,12 +90,12 @@ testParseListType : TestResult
 testParseListType =
   let src = """
 schema Data {
-    items: List Int,
+    items: List Int64,
 }
 """
       check = \p => case firstSchema p of
                       Just s => case s.cols of
-                        [c] => c.ty == SList SInt
+                        [c] => c.ty == SList SInt64
                         _ => False
                       Nothing => False
   in case parseAndCheck src check of

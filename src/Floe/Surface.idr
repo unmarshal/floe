@@ -11,8 +11,16 @@ import Floe.Types
 -- Type as written in source
 public export
 data STy
-  = SInt
-  | SFloat
+  = SInt8
+  | SInt16
+  | SInt32
+  | SInt64
+  | SUInt8
+  | SUInt16
+  | SUInt32
+  | SUInt64
+  | SFloat32
+  | SFloat64
   | SDecimal Nat Nat  -- precision, scale
   | SString
   | SBool
@@ -21,8 +29,16 @@ data STy
 
 public export
 Show STy where
-  show SInt = "Int"
-  show SFloat = "Float"
+  show SInt8 = "Int8"
+  show SInt16 = "Int16"
+  show SInt32 = "Int32"
+  show SInt64 = "Int64"
+  show SUInt8 = "UInt8"
+  show SUInt16 = "UInt16"
+  show SUInt32 = "UInt32"
+  show SUInt64 = "UInt64"
+  show SFloat32 = "Float32"
+  show SFloat64 = "Float64"
   show (SDecimal p s) = "Decimal(" ++ show p ++ ", " ++ show s ++ ")"
   show SString = "String"
   show SBool = "Bool"
@@ -31,8 +47,16 @@ Show STy where
 
 public export
 Eq STy where
-  SInt == SInt = True
-  SFloat == SFloat = True
+  SInt8 == SInt8 = True
+  SInt16 == SInt16 = True
+  SInt32 == SInt32 = True
+  SInt64 == SInt64 = True
+  SUInt8 == SUInt8 = True
+  SUInt16 == SUInt16 = True
+  SUInt32 == SUInt32 = True
+  SUInt64 == SUInt64 = True
+  SFloat32 == SFloat32 = True
+  SFloat64 == SFloat64 = True
   (SDecimal p1 s1) == (SDecimal p2 s2) = p1 == p2 && s1 == s2
   SString == SString = True
   SBool == SBool = True
@@ -43,8 +67,16 @@ Eq STy where
 -- Convert surface type to core type
 public export
 toCoreTy : STy -> Ty
-toCoreTy SInt = TInt
-toCoreTy SFloat = TFloat
+toCoreTy SInt8 = TInt8
+toCoreTy SInt16 = TInt16
+toCoreTy SInt32 = TInt32
+toCoreTy SInt64 = TInt64
+toCoreTy SUInt8 = TUInt8
+toCoreTy SUInt16 = TUInt16
+toCoreTy SUInt32 = TUInt32
+toCoreTy SUInt64 = TUInt64
+toCoreTy SFloat32 = TFloat32
+toCoreTy SFloat64 = TFloat64
 toCoreTy (SDecimal p s) = TDecimal p s
 toCoreTy SString = TString
 toCoreTy SBool = TBool
@@ -92,7 +124,7 @@ data BuiltinCall
   | BToUppercase            -- .str.to_uppercase()
   | BTrim                   -- .str.strip_chars()
   | BLenChars               -- .str.len_chars()
-  | BCast String            -- .cast(pl.Type)
+  | BCast STy               -- .cast(pl.Type)
   -- Add more as needed
 
 public export
@@ -310,11 +342,12 @@ Show ConstValue where
   show (ConstBool b) = if b then "True" else "False"
 
 -- Get the type of a constant value
+-- Integer literals default to Int64, float literals to Float64 (matching Python/Polars)
 public export
 constValueTy : ConstValue -> Ty
 constValueTy (ConstStr _) = TString
-constValueTy (ConstInt _) = TInt
-constValueTy (ConstFloat _) = TFloat
+constValueTy (ConstInt _) = TInt64
+constValueTy (ConstFloat _) = TFloat64
 constValueTy (ConstBool _) = TBool
 
 -- Binding type annotation

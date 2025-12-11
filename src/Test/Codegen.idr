@@ -253,7 +253,7 @@ let t : A -> B = transform [x] stripHttp
 testCodegenChain : TestResult
 testCodegenChain =
   let src = """
-schema A { old: String, extra: Int, }
+schema A { old: String, extra: Int64, }
 schema B { new: String, }
 let t : A -> B = rename old new >> drop [extra]
 """
@@ -350,8 +350,8 @@ let t : A -> B = transform [name] normalize
 testCodegenFilterIntComparison : TestResult
 testCodegenFilterIntComparison =
   let src = """
-schema A { age: Int, name: String, }
-schema B { age: Int, name: String, }
+schema A { age: Int64, name: String, }
+schema B { age: Int64, name: String, }
 let t : A -> B = filter .age > 18
 """
   in case generateCode src of
@@ -378,8 +378,8 @@ let t : A -> B = filter .status == "active"
 testCodegenFilterColumnComparison : TestResult
 testCodegenFilterColumnComparison =
   let src = """
-schema A { x: Int, y: Int, }
-schema B { x: Int, y: Int, }
+schema A { x: Int64, y: Int64, }
+schema B { x: Int64, y: Int64, }
 let t : A -> B = filter .x < .y
 """
   in case generateCode src of
