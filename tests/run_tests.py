@@ -74,6 +74,24 @@ def run_test(test_dir: Path) -> tuple[bool, str]:
         text=True,
         cwd=test_dir,
     )
+
+    # Check if this test expects failure
+    if hasattr(config, "expect_failure") and config.expect_failure:
+        if result.returncode != 0:
+            # Verify the error message matches expected
+            error_output = result.stderr + result.stdout
+            if hasattr(config, "expected_error"):
+                if config.expected_error in error_output:
+                    return True, f"OK (expected failure: {config.expected_error})"
+                else:
+                    return (
+                        False,
+                        f"Expected error containing '{config.expected_error}', got:\n{error_output}",
+                    )
+            return True, "OK (expected failure)"
+        else:
+            return False, "Expected execution to fail, but it succeeded"
+
     if result.returncode != 0:
         return False, f"Execution failed:\n{result.stderr}\n{result.stdout}"
 

@@ -1,0 +1,23 @@
+-- Test runtime schema validation catches mismatches
+
+schema Expected {
+    id: String,
+    amount: Decimal(10, 2),
+}
+
+schema Output {
+    id: String,
+    amount: Decimal(10, 2),
+}
+
+fn passthrough :: Expected -> Output
+fn passthrough =
+    map {
+        id: .id,
+        amount: .amount
+    }
+
+fn main =
+    read "input.parquet" as Expected
+    |> passthrough
+    sink "output.parquet"
