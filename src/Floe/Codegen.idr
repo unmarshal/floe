@@ -75,6 +75,53 @@ lookupFnDef _ [] = Nothing
 lookupFnDef name (f :: rest) = if f.name == name then Just f else lookupFnDef name rest
 
 -----------------------------------------------------------
+-- Filter Expression Codegen
+-----------------------------------------------------------
+
+-- Generate Polars comparison operator
+cmpOpToPolars : CmpOp -> String
+cmpOpToPolars CmpEq = "=="
+cmpOpToPolars CmpNeq = "!="
+cmpOpToPolars CmpLt = "<"
+cmpOpToPolars CmpGt = ">"
+cmpOpToPolars CmpLte = "<="
+cmpOpToPolars CmpGte = ">="
+
+-- Generate Polars code for a FilterExpr
+filterExprToPolars : FilterExpr s -> String
+filterExprToPolars (FCol col _) =
+  "pl.col(\"" ++ col ++ "\")"
+filterExprToPolars (FCompareCol col op val _) =
+  "pl.col(\"" ++ col ++ "\") " ++ cmpOpToPolars op ++ " \"" ++ val ++ "\""
+filterExprToPolars (FCompareCols col1 op col2 _ _) =
+  "pl.col(\"" ++ col1 ++ "\") " ++ cmpOpToPolars op ++ " pl.col(\"" ++ col2 ++ "\")"
+filterExprToPolars (FCompareInt col op val _) =
+  "pl.col(\"" ++ col ++ "\") " ++ cmpOpToPolars op ++ " " ++ show val
+filterExprToPolars (FCompareIntMaybe col op val _) =
+  -- Same codegen as FCompareInt - Polars handles nulls automatically
+  "pl.col(\"" ++ col ++ "\") " ++ cmpOpToPolars op ++ " " ++ show val
+filterExprToPolars (FAnd l r) =
+  "(" ++ filterExprToPolars l ++ ") & (" ++ filterExprToPolars r ++ ")"
+filterExprToPolars (FOr l r) =
+  "(" ++ filterExprToPolars l ++ ") | (" ++ filterExprToPolars r ++ ")"
+
+-----------------------------------------------------------
+-- Map Expression Codegen
+-----------------------------------------------------------
+
+-- Generate Polars code for a MapExpr
+mapExprToPolars : MapExpr s t -> String
+mapExprToPolars (MCol col _) = "pl.col(\"" ++ col ++ "\")"
+mapExprToPolars (MStrLit s) = "pl.lit(\"" ++ s ++ "\")"
+mapExprToPolars (MIntLit i) = "pl.lit(" ++ show i ++ ")"
+mapExprToPolars (MIf cond thenE elseE) =
+  "pl.when(" ++ filterExprToPolars cond ++ ").then(" ++ mapExprToPolars thenE ++ ").otherwise(" ++ mapExprToPolars elseE ++ ")"
+mapExprToPolars (MIfNullable cond thenE elseE) =
+  -- Nullable condition: use chained when/then to preserve nulls
+  -- when(cond).then(thenE).when(~cond).then(elseE) -> null when cond is null
+  "pl.when(" ++ filterExprToPolars cond ++ ").then(" ++ mapExprToPolars thenE ++ ").when(~(" ++ filterExprToPolars cond ++ ")).then(" ++ mapExprToPolars elseE ++ ")"
+
+-----------------------------------------------------------
 -- Map Codegen Helpers
 -----------------------------------------------------------
 
@@ -92,6 +139,8 @@ assignToPolars (FnAppAssign new fn col _) =
   "pl.col(\"" ++ col ++ "\").alias(\"" ++ new ++ "\")"
 assignToPolars (BuiltinAppAssign new builtin col _) =
   "pl.col(\"" ++ col ++ "\")" ++ builtinToPolars builtin ++ ".alias(\"" ++ new ++ "\")"
+assignToPolars (ExprAssign new _ expr) =
+  mapExprToPolars expr ++ ".alias(\"" ++ new ++ "\")"
 
 -- Generate assignment with full context (constants and function definitions)
 assignToPolarsWithContext : List (String, String) -> List SFnDef -> MapAssign s -> String
@@ -109,6 +158,8 @@ assignToPolarsWithContext consts fnDefs (FnAppAssign new fnName col _) =
       "pl.col(\"" ++ col ++ "\").alias(\"" ++ new ++ "\")"
 assignToPolarsWithContext consts fnDefs (BuiltinAppAssign new builtin col _) =
   "pl.col(\"" ++ col ++ "\")" ++ builtinToPolarsWithConsts consts builtin ++ ".alias(\"" ++ new ++ "\")"
+assignToPolarsWithContext consts fnDefs (ExprAssign new _ expr) =
+  mapExprToPolars expr ++ ".alias(\"" ++ new ++ "\")"
 
 -- Check if this is a hash assignment
 isHashAssign : MapAssign s -> Bool
@@ -163,34 +214,6 @@ mapToPolarsWithContext consts fnDefs assigns df =
 covering
 mapToPolars : List (MapAssign s) -> String -> String
 mapToPolars = mapToPolarsWithContext [] []
-
------------------------------------------------------------
--- Filter Expression Codegen
------------------------------------------------------------
-
--- Generate Polars comparison operator
-cmpOpToPolars : CmpOp -> String
-cmpOpToPolars CmpEq = "=="
-cmpOpToPolars CmpNeq = "!="
-cmpOpToPolars CmpLt = "<"
-cmpOpToPolars CmpGt = ">"
-cmpOpToPolars CmpLte = "<="
-cmpOpToPolars CmpGte = ">="
-
--- Generate Polars code for a FilterExpr
-filterExprToPolars : FilterExpr s -> String
-filterExprToPolars (FCol col _) =
-  "pl.col(\"" ++ col ++ "\")"
-filterExprToPolars (FCompareCol col op val _) =
-  "pl.col(\"" ++ col ++ "\") " ++ cmpOpToPolars op ++ " \"" ++ val ++ "\""
-filterExprToPolars (FCompareCols col1 op col2 _ _) =
-  "pl.col(\"" ++ col1 ++ "\") " ++ cmpOpToPolars op ++ " pl.col(\"" ++ col2 ++ "\")"
-filterExprToPolars (FCompareInt col op val _) =
-  "pl.col(\"" ++ col ++ "\") " ++ cmpOpToPolars op ++ " " ++ show val
-filterExprToPolars (FAnd l r) =
-  "(" ++ filterExprToPolars l ++ ") & (" ++ filterExprToPolars r ++ ")"
-filterExprToPolars (FOr l r) =
-  "(" ++ filterExprToPolars l ++ ") | (" ++ filterExprToPolars r ++ ")"
 
 -----------------------------------------------------------
 -- Polars Code Generation

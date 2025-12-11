@@ -9,6 +9,7 @@ import Floe.Core
 import Floe.Error
 
 import Data.List
+import Decidable.Equality
 
 -----------------------------------------------------------
 -- Elaboration Context
@@ -133,6 +134,7 @@ data ProcessedField
   | PFHashAssign String (List String)      -- newName: hash [.a, .b]
   | PFFnApp String String String           -- newName: fn_name .col
   | PFBuiltinApp String BuiltinCall String -- newName: builtin .col
+  | PFExpr String SExpr                    -- newName: <complex expr like if-then-else>
 
 -- Process map fields into assignments
 processMapFields : List SMapField -> List ProcessedField
@@ -154,6 +156,9 @@ processMapFields (SFieldAssign _ newName expr :: rest) =
          case getColName argExpr of
            Just colName => PFBuiltinApp newName builtin colName :: assigns
            Nothing => assigns  -- Skip complex expressions
+       SIf _ _ _ _ => PFExpr newName expr :: assigns  -- If-then-else expression
+       SStrLit _ _ => PFExpr newName expr :: assigns  -- String literal
+       SIntLit _ _ => PFExpr newName expr :: assigns  -- Integer literal
        _ => assigns  -- Skip unsupported expressions for now
 
 -- Extract column assignments (for schema computation)
@@ -199,6 +204,9 @@ validateMapSources span s (PFBuiltinApp _ _ colName :: rest) =
   if hasCol s colName
     then validateMapSources span s rest
     else err (ColNotFound span colName s)
+validateMapSources span s (PFExpr _ _ :: rest) =
+  -- Complex expressions are validated during elaboration
+  validateMapSources span s rest
 
 -- Determine output type of a builtin application
 builtinOutputTy : BuiltinCall -> Ty -> Ty
@@ -209,6 +217,47 @@ builtinOutputTy (BCast "String") _ = TString
 builtinOutputTy (BCast "Bool") _ = TBool
 builtinOutputTy _ t = t  -- Most string builtins preserve type (String -> String)
 
+-- Check if type is nullable (needed for inferExprTy)
+isNullableTy : Ty -> Bool
+isNullableTy (TMaybe _) = True
+isNullableTy _ = False
+
+-- Check if any column in the list is nullable
+anyNullable : Schema -> List String -> Bool
+anyNullable s [] = False
+anyNullable s (col :: cols) =
+  case getColTy s col of
+    Just t => isNullableTy t || anyNullable s cols
+    Nothing => anyNullable s cols
+
+-- Infer type from surface expression (for schema computation)
+-- This is a simple inference that doesn't do full elaboration
+inferExprTy : Schema -> SExpr -> Ty
+inferExprTy s (SColRef _ col) = getColType s col
+inferExprTy s (SColRefNullCheck _ col) = getColType s col
+inferExprTy s (SStrLit _ _) = TString
+inferExprTy s (SIntLit _ _) = TInt64
+inferExprTy s (SIf _ cond thenE elseE) =
+  -- Check if condition uses nullable columns (simplified check)
+  let baseTy = inferExprTy s thenE
+      condCols = collectExprCols cond
+      isNullable = anyNullable s condCols
+  in if isNullable then TMaybe baseTy else baseTy
+  where
+    collectExprCols : SExpr -> List String
+    collectExprCols (SColRef _ col) = [col]
+    collectExprCols (SColRefNullCheck _ col) = [col]
+    collectExprCols (SEq _ l r) = collectExprCols l ++ collectExprCols r
+    collectExprCols (SNeq _ l r) = collectExprCols l ++ collectExprCols r
+    collectExprCols (SLt _ l r) = collectExprCols l ++ collectExprCols r
+    collectExprCols (SGt _ l r) = collectExprCols l ++ collectExprCols r
+    collectExprCols (SLte _ l r) = collectExprCols l ++ collectExprCols r
+    collectExprCols (SGte _ l r) = collectExprCols l ++ collectExprCols r
+    collectExprCols (SAnd _ l r) = collectExprCols l ++ collectExprCols r
+    collectExprCols (SOr _ l r) = collectExprCols l ++ collectExprCols r
+    collectExprCols _ = []
+inferExprTy s _ = TString  -- Default fallback
+
 -- Convert a single processed field to a column in the output schema
 fieldToCol : Schema -> ProcessedField -> Col
 fieldToCol srcSchema (PFColAssign newName oldName) = MkCol newName (getColType srcSchema oldName)
@@ -216,6 +265,7 @@ fieldToCol srcSchema (PFHashAssign newName _) = MkCol newName TString
 fieldToCol srcSchema (PFFnApp newName _ colName) = MkCol newName (getColType srcSchema colName)
 fieldToCol srcSchema (PFBuiltinApp newName builtin colName) =
   MkCol newName (builtinOutputTy builtin (getColType srcSchema colName))
+fieldToCol srcSchema (PFExpr newName expr) = MkCol newName (inferExprTy srcSchema expr)
 
 -- Convert processed fields to schema (preserving order)
 fieldsToSchema : Schema -> List ProcessedField -> Schema
@@ -227,29 +277,42 @@ fieldsToSchema srcSchema (f :: rest) = fieldToCol srcSchema f :: fieldsToSchema 
 computeMapSchema : Schema -> List ProcessedField -> Schema
 computeMapSchema srcSchema fields = fieldsToSchema srcSchema fields
 
+-- Forward declaration for MapExprResult and elabMapExpr (defined after elabFilterExpr)
+data MapExprResult : Schema -> Type where
+  MkMapExprResult : (t : Ty) -> MapExpr s t -> MapExprResult s
+
+elabMapExpr : Span -> (s : Schema) -> SExpr -> Result (MapExprResult s)
+
 -- Convert a single ProcessedField to a MapAssign with proof
 -- Returns Nothing if the column doesn't exist
-elabMapAssign : (s : Schema) -> ProcessedField -> Maybe (MapAssign s)
-elabMapAssign s (PFColAssign new old) = do
-  MkColProof t prf <- findCol s old
-  Just (ColAssign new old prf)
-elabMapAssign s (PFHashAssign new cols) = do
-  prf <- findAllCols s cols
-  Just (HashAssign new cols prf)
-elabMapAssign s (PFFnApp new fn col) = do
-  MkColProof t prf <- findCol s col
-  Just (FnAppAssign new fn col prf)
-elabMapAssign s (PFBuiltinApp new builtin col) = do
-  MkColProof t prf <- findCol s col
-  Just (BuiltinAppAssign new builtin col prf)
+elabMapAssign : Span -> (s : Schema) -> ProcessedField -> Result (MapAssign s)
+elabMapAssign span s (PFColAssign new old) =
+  case findCol s old of
+    Just (MkColProof t prf) => ok (ColAssign new old prf)
+    Nothing => err (ColNotFound span old s)
+elabMapAssign span s (PFHashAssign new cols) =
+  case findAllCols s cols of
+    Just prf => ok (HashAssign new cols prf)
+    Nothing => err (ParseError span "One or more columns not found in hash")
+elabMapAssign span s (PFFnApp new fn col) =
+  case findCol s col of
+    Just (MkColProof t prf) => ok (FnAppAssign new fn col prf)
+    Nothing => err (ColNotFound span col s)
+elabMapAssign span s (PFBuiltinApp new builtin col) =
+  case findCol s col of
+    Just (MkColProof t prf) => ok (BuiltinAppAssign new builtin col prf)
+    Nothing => err (ColNotFound span col s)
+elabMapAssign span s (PFExpr new expr) = do
+  MkMapExprResult ty mapExpr <- elabMapExpr span s expr
+  ok (ExprAssign new ty mapExpr)
 
 -- Convert ProcessedField list to MapAssign list with proofs
-elabMapAssigns : (s : Schema) -> List ProcessedField -> Maybe (List (MapAssign s))
-elabMapAssigns s [] = Just []
-elabMapAssigns s (f :: rest) = do
-  assign <- elabMapAssign s f
-  assigns <- elabMapAssigns s rest
-  Just (assign :: assigns)
+elabMapAssignsWithSpan : Span -> (s : Schema) -> List ProcessedField -> Result (List (MapAssign s))
+elabMapAssignsWithSpan span s [] = ok []
+elabMapAssignsWithSpan span s (f :: rest) = do
+  assign <- elabMapAssign span s f
+  assigns <- elabMapAssignsWithSpan span s rest
+  ok (assign :: assigns)
 
 -----------------------------------------------------------
 -- Elaborate Filter Expression
@@ -305,10 +368,12 @@ elabFilterExpr span s expr =
             Nothing => err (ParseError span ("Column '" ++ col2 ++ "' must have same type as '" ++ col1 ++ "'"))
             Just prf2 => ok (FCompareCols col1 op col2 prf1 prf2)
     Just (SColRef _ col, op, SIntLit _ val) =>
-      -- .col op integer
+      -- .col op integer (try Int64 first, then Maybe Int64)
       case findColWithTy s col TInt64 of
-        Nothing => err (ParseError span ("Column '" ++ col ++ "' must be Int64 for integer comparison"))
         Just prf => ok (FCompareInt col op val prf)
+        Nothing => case findColWithTy s col (TMaybe TInt64) of
+          Just prf => ok (FCompareIntMaybe col op val prf)
+          Nothing => err (ParseError span ("Column '" ++ col ++ "' must be Int64 or Maybe Int64 for integer comparison"))
     Just (SColRef _ col, op, SStrLit _ val) =>
       -- .col op "string"
       case findCol s col of
@@ -316,6 +381,65 @@ elabFilterExpr span s expr =
         Just (MkColProof t prf) => ok (FCompareCol col op val prf)
     Just _ => err (ParseError span "Unsupported comparison expression")
     Nothing => err (ParseError span "Invalid filter expression")
+
+-----------------------------------------------------------
+-- Filter Expression Nullability Checks
+-----------------------------------------------------------
+
+-- Collect column names referenced in a FilterExpr
+filterExprCols : FilterExpr s -> List String
+filterExprCols (FCol col _) = [col]
+filterExprCols (FCompareCol col _ _ _) = [col]
+filterExprCols (FCompareCols col1 _ col2 _ _) = [col1, col2]
+filterExprCols (FCompareInt col _ _ _) = [col]
+filterExprCols (FCompareIntMaybe col _ _ _) = [col]
+filterExprCols (FAnd l r) = filterExprCols l ++ filterExprCols r
+filterExprCols (FOr l r) = filterExprCols l ++ filterExprCols r
+
+-- Check if a FilterExpr uses any nullable columns
+filterExprIsNullable : Schema -> FilterExpr s -> Bool
+filterExprIsNullable s expr = anyNullable s (filterExprCols expr)
+
+-----------------------------------------------------------
+-- Elaborate Map Expressions (implementation)
+-----------------------------------------------------------
+
+-- Column reference
+elabMapExpr span s (SColRef _ col) =
+  case findCol s col of
+    Nothing => err (ColNotFound span col s)
+    Just (MkColProof t prf) => ok (MkMapExprResult t (MCol col prf))
+elabMapExpr span s (SColRefNullCheck _ col) =
+  case findCol s col of
+    Nothing => err (ColNotFound span col s)
+    Just (MkColProof t prf) => ok (MkMapExprResult t (MCol col prf))
+-- String literal
+elabMapExpr span s (SStrLit _ str) = ok (MkMapExprResult TString (MStrLit str))
+-- Integer literal
+elabMapExpr span s (SIntLit _ i) = ok (MkMapExprResult TInt64 (MIntLit i))
+-- If-then-else
+elabMapExpr span s (SIf _ cond thenE elseE) = do
+  -- Elaborate condition as FilterExpr
+  condExpr <- elabFilterExpr span s cond
+  -- Elaborate both branches
+  MkMapExprResult thenTy thenExpr <- elabMapExpr span s thenE
+  MkMapExprResult elseTy elseExpr <- elabMapExpr span s elseE
+  -- Check types match and build result
+  elabIfBranches span s condExpr thenTy thenExpr elseTy elseExpr
+  where
+    elabIfBranches : Span -> (s : Schema) -> FilterExpr s
+                   -> (t1 : Ty) -> MapExpr s t1
+                   -> (t2 : Ty) -> MapExpr s t2
+                   -> Result (MapExprResult s)
+    elabIfBranches span s cond t1 e1 t2 e2 =
+      case decEq t1 t2 of
+        No _ => err (ParseError span ("If branches have different types: " ++ show t1 ++ " vs " ++ show t2))
+        Yes Refl =>
+          if filterExprIsNullable s cond
+            then ok (MkMapExprResult (TMaybe t1) (MIfNullable cond e1 e2))
+            else ok (MkMapExprResult t1 (MIf cond e1 e2))
+-- Other expressions not yet supported in map
+elabMapExpr span s expr = err (ParseError span ("Unsupported expression in map: " ++ show expr))
 
 -----------------------------------------------------------
 -- Elaborate Single Operation
@@ -359,12 +483,11 @@ elabOp ctx sIn (SFilter span expr) = do
   ok (sIn ** Filter filterExpr Done)
 
 -- Map: field assignments defining new schema
-elabOp ctx sIn (SMap span fields) =
+elabOp ctx sIn (SMap span fields) = do
   let processedFields = processMapFields fields
-      outSchema = computeMapSchema sIn processedFields
-  in case elabMapAssigns sIn processedFields of
-       Nothing => err (ParseError span "One or more columns not found in map expression")
-       Just assigns => ok (outSchema ** MapFields assigns Done)
+  let outSchema = computeMapSchema sIn processedFields
+  assigns <- elabMapAssignsWithSpan span sIn processedFields
+  ok (outSchema ** MapFields assigns Done)
 
 -- Transform: apply function to columns
 elabOp ctx sIn (STransform span cols fn) =

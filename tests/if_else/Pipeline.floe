@@ -1,0 +1,27 @@
+-- Test if-then-else expressions
+
+schema Input {
+    status: String,
+    value: Int64,
+    is_premium: Bool,
+}
+
+schema Output {
+    status: String,
+    category: String,
+    tier: String,
+}
+
+-- Test if-else with comparison in condition
+fn categorize :: Input -> Output
+fn categorize =
+    map {
+        status: .status,
+        category: if .value > 100 then "high" else "low",
+        tier: if .is_premium then "premium" else "standard"
+    }
+
+fn main =
+    read "input.parquet" as Input
+    |> categorize
+    sink "output.parquet"

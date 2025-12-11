@@ -6,14 +6,20 @@ A dependently-typed compiler for a data pipeline DSL that generates Python/Polar
 
 ```bash
 # Build the compiler
-idris2 --build floe.ipkg
+make build
 
 # Compile a .floe file to Python
 ./build/exec/floe examples/Basic.floe > out.py
 
-# Run tests
+# Run unit tests
 idris2 --build floe-test.ipkg
 ./build/exec/floe-test
+
+# Run integration tests (requires uv and polars)
+cd tests && uv run run_tests.py
+
+# Clean build artifacts and test outputs
+make clean
 ```
 
 ## Project Structure
@@ -46,10 +52,12 @@ floe/
 │   ├── Basic.floe         # Basic operations (rename, drop, filter)
 │   └── JoinExample.floe   # Join operations example
 └── tests/
-    ├── run.sh                  # Integration test runner
-    ├── join_enriches_orders/   # Join integration test
+    ├── run_tests.py            # Python integration test runner
     ├── filter_comparisons/     # Filter with int comparison test
-    └── filter_string_columns/  # Filter comparing string columns test
+    ├── filter_string_columns/  # Filter comparing string columns test
+    ├── if_else/                # If-then-else expressions test
+    ├── if_else_nullable/       # If-then-else with nullable columns test
+    └── join_enriches_orders/   # Join integration test
 ```
 
 ## Architecture
@@ -104,6 +112,7 @@ fn main input output =
 - `filter .col > 18` - filter with comparison (supports `==`, `!=`, `<`, `>`, `<=`, `>=`)
 - `filter .col1 == .col2` - filter comparing two columns (types must match)
 - `map { field: expr, ... }` - project/transform columns
+- `if cond then expr1 else expr2` - conditional expressions in map (generates Polars `when/then/otherwise`)
 - `transform [cols] fn` - apply function to columns
 - `uniqueBy .col` - deduplicate by column
 - `join other on .leftCol == .rightCol` - join tables
@@ -182,12 +191,49 @@ data FilterExpr : Schema -> Type where
   -- Column vs integer: .age > 18
   FCompareInt : (col : String) -> (op : CmpOp) -> (val : Integer)
               -> (0 prf : HasCol s col TInt64) -> FilterExpr s
+  -- Column vs integer (nullable): .maybe_age > 18
+  FCompareIntMaybe : (col : String) -> (op : CmpOp) -> (val : Integer)
+              -> (0 prf : HasCol s col (TMaybe TInt64)) -> FilterExpr s
   -- Logical combinators
   FAnd : FilterExpr s -> FilterExpr s -> FilterExpr s
   FOr : FilterExpr s -> FilterExpr s -> FilterExpr s
 ```
 
 Used by `Filter`. Key insight: `FCompareCols` shares type variable `t` between both proofs, so Idris enforces that both columns have the same type at compile time.
+
+### `MapExpr` - Schema-indexed typed value expressions
+
+```idris
+data MapExpr : Schema -> Ty -> Type where
+  -- Column reference with existence proof
+  MCol : (col : String) -> (0 prf : HasCol s col t) -> MapExpr s t
+  -- Literals
+  MStrLit : String -> MapExpr s TString
+  MIntLit : Integer -> MapExpr s TInt64
+  -- If-then-else with non-nullable condition (result type t)
+  MIf : (cond : FilterExpr s) -> (thenE : MapExpr s t) -> (elseE : MapExpr s t) -> MapExpr s t
+  -- If-then-else with nullable condition (result type Maybe t)
+  MIfNullable : (cond : FilterExpr s) -> (thenE : MapExpr s t) -> (elseE : MapExpr s t) -> MapExpr s (TMaybe t)
+```
+
+Used by `map { field: expr }`. Key insights:
+- Both `MIf` and `MIfNullable` share type variable `t` for both branches, ensuring type consistency
+- `MIfNullable` wraps result in `TMaybe t` because when condition is null, result is null (three-valued logic)
+- Elaboration automatically chooses `MIf` vs `MIfNullable` based on whether the condition references nullable columns
+
+### Three-Valued Boolean Logic
+
+When conditions reference nullable columns (`Maybe T`), Floe uses three-valued logic:
+
+| Condition | Result |
+|-----------|--------|
+| `true`    | then branch |
+| `false`   | else branch |
+| `null`    | `null` |
+
+This is implemented in codegen:
+- **Non-nullable condition**: `pl.when(cond).then(x).otherwise(y)`
+- **Nullable condition**: `pl.when(cond).then(x).when(~cond).then(y)` (no `otherwise`, so null conditions yield null)
 
 ### Elaboration
 

@@ -25,6 +25,9 @@ data Token
   | TSink          -- sink (alias for write)
   | TWhere         -- where
   | TOn            -- on
+  | TIf            -- if
+  | TThen          -- then
+  | TElse          -- else
   | TArrow         -- ->
   | TFatArrow      -- =>
   | TDoubleColon   -- ::
@@ -66,6 +69,9 @@ Show Token where
   show TSink = "sink"
   show TWhere = "where"
   show TOn = "on"
+  show TIf = "if"
+  show TThen = "then"
+  show TElse = "else"
   show TArrow = "->"
   show TFatArrow = "=>"
   show TDoubleColon = "::"
@@ -107,6 +113,9 @@ Eq Token where
   TSink == TSink = True
   TWhere == TWhere = True
   TOn == TOn = True
+  TIf == TIf = True
+  TThen == TThen = True
+  TElse == TElse = True
   TArrow == TArrow = True
   TPipeForward == TPipeForward = True
   TFatArrow == TFatArrow = True
@@ -244,6 +253,9 @@ keyword "write" = TWrite
 keyword "sink" = TSink
 keyword "where" = TWhere
 keyword "on" = TOn
+keyword "if" = TIf
+keyword "then" = TThen
+keyword "else" = TElse
 keyword s = TIdent s
 
 lexOne : LexState -> Either String (Tok, LexState)
@@ -529,6 +541,15 @@ mutual
   pPrimaryExpr st =
     let tok = currentTok st
     in case tok.tok of
+      TIf => do
+        let st = advanceP st
+        (sp, _) <- pSpan st
+        (cond, st) <- pExpr st
+        ((), st) <- expect TThen st
+        (thenExpr, st) <- pExpr st
+        ((), st) <- expect TElse st
+        (elseExpr, st) <- pExpr st
+        Right (SIf sp cond thenExpr elseExpr, st)
       TDot => pColRef st
       TIdent "hash" => do
         let st = advanceP st

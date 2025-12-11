@@ -126,6 +126,7 @@ data SExpr
   | SGt Span SExpr SExpr             -- expr > expr
   | SLte Span SExpr SExpr            -- expr <= expr
   | SGte Span SExpr SExpr            -- expr >= expr
+  | SIf Span SExpr SExpr SExpr       -- if cond then e1 else e2
 
 public export covering
 Show SExpr where
@@ -146,6 +147,7 @@ Show SExpr where
   show (SIntLit _ i) = show i
   show (SAnd _ l r) = "(" ++ show l ++ " && " ++ show r ++ ")"
   show (SOr _ l r) = "(" ++ show l ++ " || " ++ show r ++ ")"
+  show (SIf _ c t e) = "if " ++ show c ++ " then " ++ show t ++ " else " ++ show e
 
 public export
 exprSpan : SExpr -> Span
@@ -166,6 +168,7 @@ exprSpan (SLt s _ _) = s
 exprSpan (SGt s _ _) = s
 exprSpan (SLte s _ _) = s
 exprSpan (SGte s _ _) = s
+exprSpan (SIf s _ _ _) = s
 
 -----------------------------------------------------------
 -- Map field specifications

@@ -6,7 +6,9 @@ build:
 test: build
 	@idris2 --build floe-test.ipkg
 	@./build/exec/floe-test
-	@./tests/run.sh
+	@cd tests && uv run run_tests.py
 
 clean:
 	rm -rf build/
+	rm -f tests/*/generated.py tests/*/*.parquet
+	rm -rf tests/*/__pycache__

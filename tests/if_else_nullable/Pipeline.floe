@@ -1,0 +1,25 @@
+-- Test if-then-else with nullable columns in condition
+
+schema Input {
+    id: Int64,
+    maybe_value: Maybe Int64,
+    label: String,
+}
+
+schema Output {
+    id: Int64,
+    category: Maybe String,
+}
+
+-- When condition uses nullable column, result type becomes Maybe
+fn categorizeNullable :: Input -> Output
+fn categorizeNullable =
+    map {
+        id: .id,
+        category: if .maybe_value > 100 then "high" else "low"
+    }
+
+fn main =
+    read "input.parquet" as Input
+    |> categorizeNullable
+    sink "output.parquet"

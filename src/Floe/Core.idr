@@ -67,10 +67,33 @@ data FilterExpr : Schema -> Type where
   -- Comparison with integer literal
   FCompareInt : (col : String) -> (op : CmpOp) -> (val : Integer)
               -> (0 prf : HasCol s col TInt64) -> FilterExpr s
+  -- Comparison with integer literal (nullable column)
+  FCompareIntMaybe : (col : String) -> (op : CmpOp) -> (val : Integer)
+              -> (0 prf : HasCol s col (TMaybe TInt64)) -> FilterExpr s
   -- Logical AND
   FAnd : FilterExpr s -> FilterExpr s -> FilterExpr s
   -- Logical OR
   FOr : FilterExpr s -> FilterExpr s -> FilterExpr s
+
+-----------------------------------------------------------
+-- Map Value Expressions (schema-indexed, typed)
+-----------------------------------------------------------
+
+-- A value expression used in map fields, indexed by schema and result type
+public export
+data MapExpr : Schema -> Ty -> Type where
+  -- Column reference
+  MCol : (col : String) -> (0 prf : HasCol s col t) -> MapExpr s t
+  -- String literal
+  MStrLit : String -> MapExpr s TString
+  -- Integer literal
+  MIntLit : Integer -> MapExpr s TInt64
+  -- If-then-else with non-nullable condition
+  -- Both branches must have same type t, condition must be Bool (non-nullable)
+  MIf : (cond : FilterExpr s) -> (thenE : MapExpr s t) -> (elseE : MapExpr s t) -> MapExpr s t
+  -- If-then-else with nullable condition (result is Maybe t)
+  -- When condition references Maybe columns, result becomes nullable
+  MIfNullable : (cond : FilterExpr s) -> (thenE : MapExpr s t) -> (elseE : MapExpr s t) -> MapExpr s (TMaybe t)
 
 -----------------------------------------------------------
 -- Schema Transformations (type-level functions)
@@ -209,6 +232,8 @@ data MapAssign : Schema -> Type where
   BuiltinAppAssign : (newName : String) -> (builtin : BuiltinCall) -> (colName : String)
                    -> (0 prf : HasCol s colName t)
                    -> MapAssign s
+  -- General expression: new_name: expr (for if-then-else, etc.)
+  ExprAssign : (newName : String) -> (ty : Ty) -> MapExpr s ty -> MapAssign s
 
 public export
 Show (MapAssign s) where
@@ -216,6 +241,7 @@ Show (MapAssign s) where
   show (HashAssign new cols _) = new ++ ": hash " ++ show cols
   show (FnAppAssign new fn col _) = new ++ ": " ++ fn ++ " ." ++ col
   show (BuiltinAppAssign new b col _) = new ++ ": " ++ show b ++ " ." ++ col
+  show (ExprAssign new ty _) = new ++ ": <expr:" ++ show ty ++ ">"
 
 -- List of map assignments all referencing the same input schema
 public export
