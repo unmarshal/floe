@@ -252,19 +252,6 @@ RefineCols (n :: ns) s = RefineCols ns (RefineCol n s)
 
 -- Map transformation helpers
 
--- Get type of a column (returns TString as default if not found - elaborator should catch errors)
-public export
-getColType : Schema -> String -> Ty
-getColType [] _ = TString
-getColType (MkCol n t :: rest) nm = if n == nm then t else getColType rest nm
-
--- Build schema from assignments only (no spread)
-public export
-AssignsToSchema : List (String, String) -> Schema -> Schema
-AssignsToSchema [] _ = []
-AssignsToSchema ((newNm, oldNm) :: rest) srcSchema =
-  MkCol newNm (getColType srcSchema oldNm) :: AssignsToSchema rest srcSchema
-
 -- Check if a column is being replaced by an assignment
 isSourceCol : String -> List (String, String) -> Bool
 isSourceCol _ [] = False

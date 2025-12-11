@@ -28,10 +28,11 @@ record Context where
   tables : List (String, String, Schema)  -- table bindings: (name, file, schema)
   scalarFns : List (String, ScalarFn)  -- scalar functions with typed chains
   constants : List (String, ConstValue)  -- typed constants
+  pipelines : List (String, Schema, Schema)  -- pipeline bindings: (name, inSchema, outSchema)
 
 public export
 emptyCtx : Context
-emptyCtx = MkCtx [] [] [] []
+emptyCtx = MkCtx [] [] [] [] []
 
 public export
 addSchema : String -> Schema -> Context -> Context
@@ -68,6 +69,18 @@ addConstant nm val ctx = { constants := (nm, val) :: ctx.constants } ctx
 public export
 lookupConstant : String -> Context -> Maybe ConstValue
 lookupConstant nm ctx = lookup nm ctx.constants
+
+public export
+lookupPipeline : String -> Context -> Maybe (Schema, Schema)
+lookupPipeline nm ctx = lookup nm ctx.pipelines
+  where
+    lookup : String -> List (String, Schema, Schema) -> Maybe (Schema, Schema)
+    lookup _ [] = Nothing
+    lookup nm ((n, sIn, sOut) :: rest) = if n == nm then Just (sIn, sOut) else lookup nm rest
+
+public export
+addPipeline : String -> Schema -> Schema -> Context -> Context
+addPipeline nm sIn sOut ctx = { pipelines := (nm, sIn, sOut) :: ctx.pipelines } ctx
 
 -----------------------------------------------------------
 -- Parse Type Names
@@ -371,25 +384,29 @@ anyNullable s (col :: cols) =
     Nothing => anyNullable s cols
 
 -- Infer type from surface expression (for schema computation)
--- This is a simple inference that doesn't do full elaboration
-inferExprTy : Context -> Schema -> SExpr -> Ty
-inferExprTy ctx s (SColRef _ col) = getColType s col
-inferExprTy ctx s (SColRefNullCheck _ col) = getColType s col
-inferExprTy ctx s (SStrLit _ _) = TString
-inferExprTy ctx s (SIntLit _ _) = TInt64
-inferExprTy ctx s (SFloatLit _ _) = TFloat64
-inferExprTy ctx s (SBoolLit _ _) = TBool
-inferExprTy ctx s (SVar _ name) =
-  -- Look up constant type
+-- Uses findCol and returns Result (no unsafe defaults)
+inferExprTy : Context -> Schema -> SExpr -> Result Ty
+inferExprTy ctx s (SColRef sp col) =
+  case findCol s col of
+    Nothing => Left (ColNotFound sp col s)
+    Just (MkColProof t _) => Right t
+inferExprTy ctx s (SColRefNullCheck sp col) =
+  case findCol s col of
+    Nothing => Left (ColNotFound sp col s)
+    Just (MkColProof t _) => Right t
+inferExprTy ctx s (SStrLit _ _) = Right TString
+inferExprTy ctx s (SIntLit _ _) = Right TInt64
+inferExprTy ctx s (SFloatLit _ _) = Right TFloat64
+inferExprTy ctx s (SBoolLit _ _) = Right TBool
+inferExprTy ctx s (SVar sp name) =
   case lookupConstant name ctx of
-    Just constVal => constValueTy constVal
-    Nothing => TString  -- Fallback for unknown constants
-inferExprTy ctx s (SIf _ cond thenE elseE) =
-  -- Check if condition uses nullable columns (simplified check)
-  let baseTy = inferExprTy ctx s thenE
-      condCols = collectExprCols cond
+    Just constVal => Right (constValueTy constVal)
+    Nothing => Left (ParseError sp "Unknown constant '\{name}'")
+inferExprTy ctx s (SIf sp cond thenE elseE) = do
+  baseTy <- inferExprTy ctx s thenE
+  let condCols = collectExprCols cond
       isNullable = anyNullable s condCols
-  in if isNullable then TMaybe baseTy else baseTy
+  pure (if isNullable then TMaybe baseTy else baseTy)
   where
     collectExprCols : SExpr -> List String
     collectExprCols (SColRef _ col) = [col]
@@ -403,25 +420,34 @@ inferExprTy ctx s (SIf _ cond thenE elseE) =
     collectExprCols (SAnd _ l r) = collectExprCols l ++ collectExprCols r
     collectExprCols (SOr _ l r) = collectExprCols l ++ collectExprCols r
     collectExprCols _ = []
--- Arithmetic: infer type from left operand (both should be same type)
-inferExprTy ctx s (SAdd _ l r) = inferExprTy ctx s l
-inferExprTy ctx s (SSub _ l r) = inferExprTy ctx s l
-inferExprTy ctx s (SMul _ l r) = inferExprTy ctx s l
-inferExprTy ctx s (SDiv _ l r) = inferExprTy ctx s l
-inferExprTy ctx s (SMod _ l r) = inferExprTy ctx s l
--- Cast: the target type is the result type
-inferExprTy ctx s (SCast _ expr targetTy) = toCoreTy targetTy
-inferExprTy ctx s _ = TString  -- Default fallback
+inferExprTy ctx s (SAdd sp l r) = inferExprTy ctx s l
+inferExprTy ctx s (SSub sp l r) = inferExprTy ctx s l
+inferExprTy ctx s (SMul sp l r) = inferExprTy ctx s l
+inferExprTy ctx s (SDiv sp l r) = inferExprTy ctx s l
+inferExprTy ctx s (SMod sp l r) = inferExprTy ctx s l
+inferExprTy ctx s (SConcat sp l r) = Right TString  -- String concatenation always produces String
+inferExprTy ctx s (SCast sp expr targetTy) = Right (toCoreTy targetTy)
+inferExprTy ctx s expr = Left (ParseError (exprSpan expr) "Cannot infer type for expression")
 
 -- Convert a single processed field to a column in the output schema
-fieldToCol : Context -> Schema -> ProcessedField -> Col
-fieldToCol ctx srcSchema (PFColAssign newName oldName) = MkCol newName (getColType srcSchema oldName)
-fieldToCol ctx srcSchema (PFHashAssign newName _) = MkCol newName TString
-fieldToCol ctx srcSchema (PFFnApp newName _ colName) = MkCol newName (getColType srcSchema colName)
+fieldToCol : Context -> Schema -> ProcessedField -> Result Col
+fieldToCol ctx srcSchema (PFColAssign newName oldName) =
+  case findCol srcSchema oldName of
+    Nothing => Left (ColNotFound dummySpan oldName srcSchema)  -- TODO: need proper span from ProcessedField
+    Just (MkColProof t _) => Right (MkCol newName t)
+fieldToCol ctx srcSchema (PFHashAssign newName _) = Right (MkCol newName TString)
+fieldToCol ctx srcSchema (PFFnApp newName _ colName) =
+  case findCol srcSchema colName of
+    Nothing => Left (ColNotFound dummySpan colName srcSchema)  -- TODO: need proper span
+    Just (MkColProof t _) => Right (MkCol newName t)
 fieldToCol ctx srcSchema (PFBuiltinApp newName builtin colName) =
-  MkCol newName (builtinOutputTy builtin (getColType srcSchema colName))
-fieldToCol ctx srcSchema (PFExpr newName expr) = MkCol newName (inferExprTy ctx srcSchema expr)
-fieldToCol ctx srcSchema PFSpread = MkCol "" TString  -- Dummy, should never be called directly
+  case findCol srcSchema colName of
+    Nothing => Left (ColNotFound dummySpan colName srcSchema)  -- TODO: need proper span
+    Just (MkColProof t _) => Right (MkCol newName (builtinOutputTy builtin t))
+fieldToCol ctx srcSchema (PFExpr newName expr) = do
+  t <- inferExprTy ctx srcSchema expr
+  pure (MkCol newName t)
+fieldToCol ctx srcSchema PFSpread = Right (MkCol "" TString)  -- Dummy, should never be called directly
 
 -- Check if list contains spread
 hasSpread : List ProcessedField -> Bool
@@ -478,21 +504,24 @@ computeSpreadSchema (col@(MkCol name _) :: rest) consumedCols =
     else col :: computeSpreadSchema rest consumedCols
 
 -- Convert processed fields to schema (preserving order), excluding spread
-fieldsToSchema : Context -> Schema -> List ProcessedField -> Schema
-fieldsToSchema ctx srcSchema [] = []
+fieldsToSchema : Context -> Schema -> List ProcessedField -> Result Schema
+fieldsToSchema ctx srcSchema [] = Right []
 fieldsToSchema ctx srcSchema (PFSpread :: rest) = fieldsToSchema ctx srcSchema rest  -- Skip spread
-fieldsToSchema ctx srcSchema (f :: rest) = fieldToCol ctx srcSchema f :: fieldsToSchema ctx srcSchema rest
+fieldsToSchema ctx srcSchema (f :: rest) = do
+  col <- fieldToCol ctx srcSchema f
+  rest' <- fieldsToSchema ctx srcSchema rest
+  pure (col :: rest')
 
 -- Compute output schema for map operation
 -- Explicit fields come first, then spread columns (if spread is present)
-computeMapSchema : Context -> Schema -> List ProcessedField -> Schema
-computeMapSchema ctx srcSchema fields =
-  let explicitSchema = fieldsToSchema ctx srcSchema fields
-  in if hasSpread fields
-       then let consumedCols = getConsumedColumns fields
-                spreadSchema = computeSpreadSchema srcSchema consumedCols
-            in explicitSchema ++ spreadSchema
-       else explicitSchema
+computeMapSchema : Context -> Schema -> List ProcessedField -> Result Schema
+computeMapSchema ctx srcSchema fields = do
+  explicitSchema <- fieldsToSchema ctx srcSchema fields
+  pure (if hasSpread fields
+         then let consumedCols = getConsumedColumns fields
+                  spreadSchema = computeSpreadSchema srcSchema consumedCols
+              in explicitSchema ++ spreadSchema
+         else explicitSchema)
 
 -- Forward declaration for MapExprResult and elabMapExpr (defined after elabFilterExpr)
 data MapExprResult : Schema -> Type where
@@ -826,7 +855,7 @@ elabOp ctx sIn (SFilter span expr) = do
 -- Map: field assignments defining new schema
 elabOp ctx sIn (SMap span fields) = do
   let processedFields = processMapFields fields
-  let outSchema = computeMapSchema ctx sIn processedFields
+  outSchema <- computeMapSchema ctx sIn processedFields
   assigns <- elabMapAssignsWithSpan ctx span sIn processedFields
   let spreadCols = if hasSpread processedFields
                      then map (\(MkCol name _) => name) (computeSpreadSchema sIn (getConsumedColumns processedFields))
@@ -983,11 +1012,12 @@ validateTransforms ctx (t :: rest) = do
   _ <- elabTransformDef ctx t
   validateTransforms ctx rest
 
-validateLetBinds : Context -> List STypeSig -> List SLetBind -> Result ()
-validateLetBinds ctx sigs [] = ok ()
+validateLetBinds : Context -> List STypeSig -> List SLetBind -> Result Context
+validateLetBinds ctx sigs [] = ok ctx
 validateLetBinds ctx sigs (b :: rest) = do
-  _ <- elabLetBind ctx sigs b
-  validateLetBinds ctx sigs rest
+  (sIn ** sOut ** _) <- elabLetBind ctx sigs b
+  let ctx' = addPipeline b.name sIn sOut ctx
+  validateLetBinds ctx' sigs rest
 
 -- Validate main expressions
 validateMainExpr : Context -> SMainExpr -> Result ()
@@ -997,26 +1027,44 @@ validateMainExpr ctx (SMRead sp file schemaName) =
     Nothing => err (ParseError sp ("Schema '" ++ schemaName ++ "' is not defined"))
 validateMainExpr ctx (SMApply sp transform expr) = do
   validateMainExpr ctx expr
-  ok ()  -- TODO: validate transform exists
+  -- Validate transform exists
+  case lookupPipeline transform ctx of
+    Just _ => ok ()
+    Nothing => err (ParseError sp ("Transform '" ++ transform ++ "' is not defined"))
 validateMainExpr ctx (SMPipe sp expr transform) = do
   validateMainExpr ctx expr
-  ok ()  -- TODO: validate transform exists
-validateMainExpr ctx (SMVar sp name) = ok ()  -- TODO: validate variable is bound
+  -- Validate transform exists
+  case lookupPipeline transform ctx of
+    Just _ => ok ()
+    Nothing => err (ParseError sp ("Transform '" ++ transform ++ "' is not defined"))
+validateMainExpr ctx (SMVar sp name) =
+  -- Validate variable is bound (could be a table or pipeline)
+  case lookupTable name ctx of
+    Just _ => ok ()
+    Nothing => case lookupPipeline name ctx of
+      Just _ => ok ()
+      Nothing => err (ParseError sp ("Variable '" ++ name ++ "' is not defined"))
 
--- Validate main statements
-validateMainStmt : Context -> SMainStmt -> Result ()
-validateMainStmt ctx (SMBind sp name expr) = validateMainExpr ctx expr
-validateMainStmt ctx (SMSink sp file expr) = validateMainExpr ctx expr
+-- Validate main statements (returns updated context with local bindings)
+validateMainStmt : Context -> SMainStmt -> Result Context
+validateMainStmt ctx (SMBind sp name expr) = do
+  validateMainExpr ctx expr
+  -- Add local binding to context (we don't know the schema yet, but mark it as existing)
+  -- For now, add it as a dummy table binding so variable lookups succeed
+  ok (addTable name "local" [] ctx)
+validateMainStmt ctx (SMSink sp file expr) = do
+  validateMainExpr ctx expr
+  ok ctx
 
 validateMain : Context -> Maybe SMain -> Result ()
 validateMain ctx Nothing = ok ()
-validateMain ctx (Just m) = go m.body
+validateMain ctx (Just m) = go ctx m.body
   where
-    go : List SMainStmt -> Result ()
-    go [] = ok ()
-    go (stmt :: rest) = do
-      validateMainStmt ctx stmt
-      go rest
+    go : Context -> List SMainStmt -> Result ()
+    go ctx [] = ok ()
+    go ctx (stmt :: rest) = do
+      ctx' <- validateMainStmt ctx stmt
+      go ctx' rest
 
 -- Register scalar function types (e.g., fn strip_prefix :: String -> String)
 -- Skips pipeline type sigs (schema -> schema)
@@ -1049,8 +1097,8 @@ elabBindings ctx (b :: rest) =
                _ => ctx
   in elabBindings ctx' rest
 
--- Validate pipeline bindings (new syntax)
-validatePipelineBinding : Context -> SBinding -> Result ()
+-- Validate and register pipeline bindings (new syntax)
+validatePipelineBinding : Context -> SBinding -> Result Context
 validatePipelineBinding ctx b =
   case (b.ty, b.val) of
     (SBTyPipeline inName outName, SBValPipeline pipeline) => do
@@ -1068,9 +1116,9 @@ validatePipelineBinding ctx b =
             Nothing => err (SchemaNotFound b.span outName)
             Just expectedOut =>
               case decEq sOut expectedOut of
-                Yes Refl => ok ()
+                Yes Refl => ok (addPipeline b.name sIn expectedOut ctx)
                 No _ => err (SchemaMismatch b.span inName outName expectedOut sOut)
-    _ => ok ()  -- Not a pipeline binding, skip
+    _ => ok ctx  -- Not a pipeline binding, skip
 
 -- Validate a column function binding
 validateColFnBinding : SBinding -> Result ()
@@ -1089,12 +1137,12 @@ validateColFnBindings (b :: rest) = do
   validateColFnBinding b
   validateColFnBindings rest
 
--- Validate all pipeline bindings from new syntax
-validatePipelineBindings : Context -> List SBinding -> Result ()
-validatePipelineBindings ctx [] = ok ()
+-- Validate all pipeline bindings from new syntax and return updated context
+validatePipelineBindings : Context -> List SBinding -> Result Context
+validatePipelineBindings ctx [] = ok ctx
 validatePipelineBindings ctx (b :: rest) = do
-  validatePipelineBinding ctx b
-  validatePipelineBindings ctx rest
+  ctx' <- validatePipelineBinding ctx b
+  validatePipelineBindings ctx' rest
 
 public export
 elabProgram : SProgram -> Result Context
@@ -1111,12 +1159,12 @@ elabProgram prog = do
   ctx <- elabTableBinds ctx (getTableBinds prog)
   -- Sixth pass: elaborate transforms (just validate for now)
   validateTransforms ctx (getTransforms prog)
-  -- Seventh pass: elaborate let bindings (legacy syntax)
-  validateLetBinds ctx (getTypeSigs prog) (getLetBinds prog)
+  -- Seventh pass: elaborate let bindings (legacy syntax) and register pipelines
+  ctx <- validateLetBinds ctx (getTypeSigs prog) (getLetBinds prog)
   -- Eighth pass: validate column function bindings (new syntax)
   validateColFnBindings (getBindings prog)
-  -- Ninth pass: validate pipeline bindings (new syntax)
-  validatePipelineBindings ctx (getBindings prog)
+  -- Ninth pass: validate pipeline bindings (new syntax) and register them
+  ctx <- validatePipelineBindings ctx (getBindings prog)
   -- Tenth pass: validate main entry point
   validateMain ctx (getMain prog)
   ok ctx

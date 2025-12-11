@@ -386,6 +386,31 @@ let t : A -> B = filter .age >= unknownConst
        Right () => pass "elab error: undefined constant"
        Left e => fail "elab error: undefined constant" e
 
+testElabUndefinedTransformInMain : TestResult
+testElabUndefinedTransformInMain =
+  let src = """
+schema Input { x: String, }
+main = do
+    data <- read "input.parquet" as Input
+    result <- data |> undefinedTransform
+    sink "output.parquet" result
+"""
+  in case elabExpectError src "not defined" of
+       Right () => pass "elab error: undefined transform in main"
+       Left e => fail "elab error: undefined transform in main" e
+
+testElabUndefinedVariableInMain : TestResult
+testElabUndefinedVariableInMain =
+  let src = """
+schema Input { x: String, }
+main = do
+    result <- undefinedVar |> someTransform
+    sink "output.parquet" result
+"""
+  in case elabExpectError src "not defined" of
+       Right () => pass "elab error: undefined variable in main"
+       Left e => fail "elab error: undefined variable in main" e
+
 testElabConstantInIfCondition : TestResult
 testElabConstantInIfCondition =
   let src = """
@@ -593,6 +618,8 @@ elaborateTests = suite "Elaborate Tests"
   , testElabConstantBool
   , testElabConstantTypeMismatch
   , testElabConstantUndefined
+  , testElabUndefinedTransformInMain
+  , testElabUndefinedVariableInMain
   , testElabConstantInIfCondition
   , testElabBoolLiterals
   -- Cast and numeric type tests
