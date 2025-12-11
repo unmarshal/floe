@@ -9,6 +9,6 @@ schema Output {
     other: Int64,
 }
 
-fn rename_col :: Input -> Output
-fn rename_col =
+fn renameCol :: Input -> Output
+fn renameCol =
     rename old_name new_name

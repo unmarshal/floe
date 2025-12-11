@@ -390,6 +390,16 @@ pMany p st = go [] st
       Right (x, st') => go (acc ++ [x]) st'
       Left _ => Right (acc, st)
 
+-- Many combinator that tracks the last error for better error messages
+-- Returns (items, state, maybe last error)
+pManyWithError : Parser a -> ParseState -> Either FloeError (List a, ParseState, Maybe FloeError)
+pManyWithError p st = go [] st Nothing
+  where
+    go : List a -> ParseState -> Maybe FloeError -> Either FloeError (List a, ParseState, Maybe FloeError)
+    go acc st lastErr = case p st of
+      Right (x, st') => go (acc ++ [x]) st' Nothing
+      Left e => Right (acc, st, Just e)
+
 -- Check if at a specific token (for lookahead)
 isToken : Token -> ParseState -> Bool
 isToken t st = (currentTok st).tok == t
@@ -946,12 +956,15 @@ getTransforms' (_ :: rest) = getTransforms' rest
 
 pProgram : Parser SProgram
 pProgram st = do
-  (items, st) <- pMany pTopLevel st
+  (items, st, lastErr) <- pManyWithError pTopLevel st
   -- Check we consumed everything (except EOF)
   let tok = currentTok st
   case tok.tok of
     TEOF => Right (MkSProgram items, st)
-    _ => Left (ParseError tok.span ("Unexpected token: " ++ show tok.tok))
+    _ => case lastErr of
+           -- If we have a specific error from parsing, use that instead of generic message
+           Just e => Left e
+           Nothing => Left (ParseError tok.span ("Unexpected token: " ++ show tok.tok))
 
 -----------------------------------------------------------
 -- Public API
