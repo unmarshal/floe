@@ -100,6 +100,27 @@ fn main input output =
     read input as RawUser
     |> cleanUser
     write output
+
+-- Conditional expressions in map
+schema Product {
+    name: String,
+    price: Int64,
+    in_stock: Bool,
+}
+
+schema LabeledProduct {
+    name: String,
+    price_tier: String,
+    availability: String,
+}
+
+fn labelProducts :: Product -> LabeledProduct
+fn labelProducts =
+    map {
+        name: .name,
+        price_tier: if .price > 100 then "premium" else "budget",
+        availability: if .in_stock then "available" else "out of stock"
+    }
 ```
 
 ### Operations
