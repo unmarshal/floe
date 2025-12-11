@@ -11,18 +11,10 @@ import Floe.Codegen
 import Floe.Parser
 import Floe.Backend
 import Floe.Backend.PolarsPython
+import Floe.Util
 import System.File
 import System
 import Data.List
-
------------------------------------------------------------
--- Utilities
------------------------------------------------------------
-
--- Convert Maybe to Either with error
-note : err -> Maybe a -> Either err a
-note err Nothing  = Left err
-note _   (Just x) = Right x
 
 -----------------------------------------------------------
 -- Build GeneratedProgram from parsed/elaborated program

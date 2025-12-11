@@ -7,6 +7,7 @@ import Floe.Types
 import Floe.Surface
 import Floe.Core
 import Floe.Error
+import Floe.Util
 
 import Data.List
 import Decidable.Equality
