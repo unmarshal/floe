@@ -12,15 +12,14 @@ schema Output {
     email: String,
 }
 
-fn passthrough :: Expected -> Output
-fn passthrough =
+let passthrough : Expected -> Output =
     map {
         id: .id,
         name: .name,
         email: .email
     }
 
-fn main =
+main =
     read "input.parquet" as Expected
     |> passthrough
     sink "output.parquet"

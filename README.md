@@ -10,7 +10,7 @@ Data pipelines fail at runtime with schema mismatches, missing columns, and type
 
 Floe uses dependent types (in Idris 2) to make invalid pipelines unrepresentable. If your pipeline compiles, every column reference is valid, every type matches, and the output schema is exactly what you declared.
 
-```idris
+```
 schema RawUser {
     user_id: String,
     full_name: String,
@@ -24,8 +24,7 @@ schema User {
     email: String,
 }
 
-fn cleanUser :: RawUser -> User
-fn cleanUser =
+let cleanUser : RawUser -> User =
     rename user_id id >>
     rename full_name name >>
     rename email_address email >>
@@ -39,15 +38,14 @@ The compiler proves:
 
 If you make a mistake, the compiler catches it:
 
-```idris
-fn cleanUser :: RawUser -> User
-fn cleanUser =
+```
+let cleanUser : RawUser -> User =
     rename user_id id >>
     drop [user_id]  -- ERROR: user_id no longer exists!
 ```
 
 ```
-line 4, col 5: One or more columns not found for drop
+line 3, col 5: One or more columns not found for drop
 ```
 
 ## Quick Start
@@ -70,7 +68,7 @@ Floe supports the following column types:
 | Type | Description |
 |------|-------------|
 | `String` | Text data |
-| `Int64` | 64-bit integers |
+| `Int` | 64-bit integers |
 | `Float` | 64-bit floating point |
 | `Bool` | Boolean values |
 | `Decimal(p, s)` | Fixed-point decimal with precision `p` and scale `s` |
@@ -87,8 +85,7 @@ schema Invoice {
     tax_rate: Decimal(5, 4),     -- 5 digits total, 4 after decimal
 }
 
-fn calculateTotal :: Invoice -> InvoiceWithTotal
-fn calculateTotal =
+let calculateTotal : Invoice -> InvoiceWithTotal =
     map {
         amount: .amount,
         tax: .amount * .tax_rate,
@@ -120,7 +117,7 @@ If a parquet file has `Decimal(38, 2)` but you declared `Decimal(10, 2)`, you ge
 
 ## Operations
 
-```idris
+```
 -- Rename a column
 rename old_name new_name
 
@@ -191,9 +188,8 @@ Why? Because columnar operations (rename, drop, filter, join, map) can be:
 
 If you need custom logic, define a scalar function with builtins:
 
-```idris
-fn normalizeUrl :: String -> String
-fn normalizeUrl = trim >> toLowercase >> stripPrefix "https://"
+```
+let normalizeUrl : String -> String = trim >> toLowercase >> stripPrefix "https://"
 ```
 
 For anything more complex, write it in Python and call it from your pipeline.

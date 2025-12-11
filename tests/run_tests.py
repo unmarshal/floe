@@ -61,6 +61,26 @@ def run_test(test_dir: Path) -> tuple[bool, str]:
         capture_output=True,
         text=True,
     )
+
+    # Check if this test expects compile-time failure
+    if hasattr(config, "expect_compile_failure") and config.expect_compile_failure:
+        if result.returncode != 0:
+            error_output = result.stderr + result.stdout
+            if hasattr(config, "expected_error"):
+                if config.expected_error in error_output:
+                    return (
+                        True,
+                        f"OK (expected compile failure: {config.expected_error})",
+                    )
+                else:
+                    return (
+                        False,
+                        f"Expected error containing '{config.expected_error}', got:\n{error_output}",
+                    )
+            return True, "OK (expected compile failure)"
+        else:
+            return False, "Expected compilation to fail, but it succeeded"
+
     if result.returncode != 0:
         return False, f"Compilation failed:\n{result.stderr}"
 

@@ -20,7 +20,7 @@ import Data.List
 -- Helpers
 -----------------------------------------------------------
 
--- Parse, elaborate, generate code for first let binding
+-- Parse, elaborate, generate code for first pipeline binding
 generateCode : String -> Either String String
 generateCode src =
   case parseFloe src of
@@ -29,16 +29,36 @@ generateCode src =
       case elabProgram prog of
         Left e => Left ("Elab error: " ++ show e)
         Right ctx =>
-          case getLetBinds prog of
-            [] => Left "No let bindings found"
-            (b :: _) =>
-              let typeSigs = getTypeSigs prog
-                  consts = getConsts prog
-                  fnDefs = getFnDefs prog
-              in case elabLetBind ctx typeSigs b of
-                   Left e => Left ("Elab error: " ++ show e)
-                   Right (_ ** _ ** pipeline) =>
-                     Right (toPolarsWithConstsAndFns consts fnDefs pipeline "df")
+          -- Find first pipeline binding
+          case findPipelineBinding (getBindings prog) of
+            Nothing => Left "No pipeline binding found"
+            Just b =>
+              case (b.ty, b.val) of
+                (SBTyPipeline inName outName, SBValPipeline (SPipe _ ops _)) =>
+                  case lookupSchema inName ctx of
+                    Nothing => Left ("Schema not found: " ++ inName)
+                    Just sIn =>
+                      let consts = getConsts prog
+                          fnDefs = extractColFnDefs (getBindings prog)
+                      in case elabOps ctx sIn ops of
+                           Left e => Left ("Elab error: " ++ show e)
+                           Right (_ ** pipeline) =>
+                             Right (toPolarsWithConstsAndFns consts fnDefs pipeline "df")
+                _ => Left "First binding is not a pipeline"
+  where
+    findPipelineBinding : List SBinding -> Maybe SBinding
+    findPipelineBinding [] = Nothing
+    findPipelineBinding (b :: rest) =
+      case b.ty of
+        SBTyPipeline _ _ => Just b
+        _ => findPipelineBinding rest
+
+    extractColFnDefs : List SBinding -> List SFnDef
+    extractColFnDefs [] = []
+    extractColFnDefs (b :: rest) =
+      case (b.ty, b.val) of
+        (SBTyColFn _ _, SBValColFn chain) => MkSFnDef b.span b.name chain :: extractColFnDefs rest
+        _ => extractColFnDefs rest
 
 -- Check if generated code contains substring
 codeContains : String -> String -> Bool
@@ -53,8 +73,7 @@ testCodegenRename =
   let src = """
 schema A { old: String, }
 schema B { new: String, }
-fn t :: A -> B
-fn t = rename old new
+let t : A -> B = rename old new
 """
   in case generateCode src of
        Right code =>
@@ -72,8 +91,7 @@ testCodegenDrop =
   let src = """
 schema A { a: String, b: String, }
 schema B { a: String, }
-fn t :: A -> B
-fn t = drop [b]
+let t : A -> B = drop [b]
 """
   in case generateCode src of
        Right code =>
@@ -91,8 +109,7 @@ testCodegenSelect =
   let src = """
 schema A { a: String, b: String, }
 schema B { a: String, }
-fn t :: A -> B
-fn t = select [a]
+let t : A -> B = select [a]
 """
   in case generateCode src of
        Right code =>
@@ -110,8 +127,7 @@ testCodegenMap =
   let src = """
 schema A { x: String, }
 schema B { y: String, }
-fn t :: A -> B
-fn t = map { y: .x }
+let t : A -> B = map { y: .x }
 """
   in case generateCode src of
        Right code =>
@@ -125,8 +141,7 @@ testCodegenMapHash =
   let src = """
 schema A { a: String, b: String, }
 schema B { id: String, }
-fn t :: A -> B
-fn t = map { id: hash [.a, .b] }
+let t : A -> B = map { id: hash [.a, .b] }
 """
   in case generateCode src of
        Right code =>
@@ -144,8 +159,7 @@ testCodegenFilter =
   let src = """
 schema A { x: String, active: Bool, }
 schema B { x: String, active: Bool, }
-fn t :: A -> B
-fn t = filter .active
+let t : A -> B = filter .active
 """
   in case generateCode src of
        Right code =>
@@ -163,8 +177,7 @@ testCodegenRequire =
   let src = """
 schema A { x: Maybe String, }
 schema B { x: String, }
-fn t :: A -> B
-fn t = require [x]
+let t : A -> B = require [x]
 """
   in case generateCode src of
        Right code =>
@@ -184,8 +197,7 @@ schema User { id: String, name: String, }
 schema Order { oid: String, user_id: String, }
 schema R { oid: String, name: String, }
 let users = read "users.parquet" as User
-fn t :: Order -> R
-fn t = join users on .user_id == .id >> map { oid: .oid, name: .name }
+let t : Order -> R = join users on .user_id == .id >> map { oid: .oid, name: .name }
 """
   in case generateCode src of
        Right code =>
@@ -205,8 +217,7 @@ testCodegenUniqueBy =
   let src = """
 schema A { x: String, }
 schema B { x: String, }
-fn t :: A -> B
-fn t = uniqueBy .x
+let t : A -> B = uniqueBy .x
 """
   in case generateCode src of
        Right code =>
@@ -224,10 +235,8 @@ testCodegenTransform =
   let src = """
 schema A { x: String, }
 schema B { x: String, }
-fn stripHttp :: String -> String
-fn stripHttp = stripPrefix "https://"
-fn t :: A -> B
-fn t = transform [x] stripHttp
+let stripHttp : String -> String = stripPrefix "https://"
+let t : A -> B = transform [x] stripHttp
 """
   in case generateCode src of
        Right code =>
@@ -246,8 +255,7 @@ testCodegenChain =
   let src = """
 schema A { old: String, extra: Int, }
 schema B { new: String, }
-fn t :: A -> B
-fn t = rename old new >> drop [extra]
+let t : A -> B = rename old new >> drop [extra]
 """
   in case generateCode src of
        Right code =>
@@ -265,10 +273,8 @@ testCodegenToLowercase =
   let src = """
 schema A { name: String, }
 schema B { name: String, }
-fn lower :: String -> String
-fn lower = toLowercase
-fn t :: A -> B
-fn t = transform [name] lower
+let lower : String -> String = toLowercase
+let t : A -> B = transform [name] lower
 """
   in case generateCode src of
        Right code =>
@@ -282,10 +288,8 @@ testCodegenToUppercase =
   let src = """
 schema A { name: String, }
 schema B { name: String, }
-fn upper :: String -> String
-fn upper = toUppercase
-fn t :: A -> B
-fn t = transform [name] upper
+let upper : String -> String = toUppercase
+let t : A -> B = transform [name] upper
 """
   in case generateCode src of
        Right code =>
@@ -299,10 +303,8 @@ testCodegenTrim =
   let src = """
 schema A { name: String, }
 schema B { name: String, }
-fn trimStr :: String -> String
-fn trimStr = trim
-fn t :: A -> B
-fn t = transform [name] trimStr
+let trimStr : String -> String = trim
+let t : A -> B = transform [name] trimStr
 """
   in case generateCode src of
        Right code =>
@@ -316,10 +318,8 @@ testCodegenLenChars =
   let src = """
 schema A { name: String, }
 schema B { name: String, }
-fn len :: String -> String
-fn len = lenChars
-fn t :: A -> B
-fn t = transform [name] len
+let len : String -> String = lenChars
+let t : A -> B = transform [name] len
 """
   in case generateCode src of
        Right code =>
@@ -333,10 +333,8 @@ testCodegenBuiltinChain =
   let src = """
 schema A { name: String, }
 schema B { name: String, }
-fn normalize :: String -> String
-fn normalize = trim >> toLowercase
-fn t :: A -> B
-fn t = transform [name] normalize
+let normalize : String -> String = trim >> toLowercase
+let t : A -> B = transform [name] normalize
 """
   in case generateCode src of
        Right code =>
@@ -354,8 +352,7 @@ testCodegenFilterIntComparison =
   let src = """
 schema A { age: Int, name: String, }
 schema B { age: Int, name: String, }
-fn t :: A -> B
-fn t = filter .age > 18
+let t : A -> B = filter .age > 18
 """
   in case generateCode src of
        Right code =>
@@ -369,8 +366,7 @@ testCodegenFilterStringComparison =
   let src = """
 schema A { status: String, name: String, }
 schema B { status: String, name: String, }
-fn t :: A -> B
-fn t = filter .status == "active"
+let t : A -> B = filter .status == "active"
 """
   in case generateCode src of
        Right code =>
@@ -384,8 +380,7 @@ testCodegenFilterColumnComparison =
   let src = """
 schema A { x: Int, y: Int, }
 schema B { x: Int, y: Int, }
-fn t :: A -> B
-fn t = filter .x < .y
+let t : A -> B = filter .x < .y
 """
   in case generateCode src of
        Right code =>
@@ -399,8 +394,7 @@ testCodegenFilterStringColumnComparison =
   let src = """
 schema A { name: String, other_name: String, }
 schema B { name: String, other_name: String, }
-fn t :: A -> B
-fn t = filter .name == .other_name
+let t : A -> B = filter .name == .other_name
 """
   in case generateCode src of
        Right code =>

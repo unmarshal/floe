@@ -13,15 +13,14 @@ schema Output {
 }
 
 -- Test if-else with comparison in condition
-fn categorize :: Input -> Output
-fn categorize =
+let categorize : Input -> Output =
     map {
         status: .status,
         category: if .value > 100 then "high" else "low",
         tier: if .is_premium then "premium" else "standard"
     }
 
-fn main =
+main =
     read "input.parquet" as Input
     |> categorize
     sink "output.parquet"

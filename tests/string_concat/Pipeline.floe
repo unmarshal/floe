@@ -11,10 +11,9 @@ schema Output {
     greeting: String,
 }
 
-fn transform :: Input -> Output
-fn transform = map {
+let transform : Input -> Output = map {
     full_name: .first_name ++ " " ++ .last_name,
     greeting: "Hello, " ++ .title ++ " " ++ .last_name,
 }
 
-fn main = read "input.parquet" as Input |> transform sink "output.parquet"
+main = read "input.parquet" as Input |> transform sink "output.parquet"

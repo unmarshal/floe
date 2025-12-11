@@ -14,13 +14,13 @@ schema User {
 }
 
 schema NullableRecord {
-    id: Int64,
+    id: Int,
     value: Maybe String,
     label: Maybe String,
 }
 
 schema CleanRecord {
-    id: Int64,
+    id: Int,
     value: String,
     label: String,
 }
@@ -33,19 +33,16 @@ schema ActiveUser {
 }
 
 -- Transform raw user data to clean schema
-fn cleanUser :: RawUser -> User
-fn cleanUser =
+let cleanUser : RawUser -> User =
     rename user_id id >>
     rename full_name name >>
     rename email_address email >>
     drop [is_active]
 
 -- Filter nulls and refine types
-fn requireFields :: NullableRecord -> CleanRecord
-fn requireFields =
+let requireFields : NullableRecord -> CleanRecord =
     require [value, label]
 
 -- Filter to only active users
-fn activeOnly :: RawUser -> ActiveUser
-fn activeOnly =
+let activeOnly : RawUser -> ActiveUser =
     filter .is_active

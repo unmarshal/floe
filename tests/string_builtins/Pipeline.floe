@@ -14,11 +14,9 @@ schema CleanUrl {
     name_len: Int,
 }
 
-fn normalizeUrl :: String -> String
-fn normalizeUrl = trim >> toLowercase >> stripPrefix "https://"
+let normalizeUrl : String -> String = trim >> toLowercase >> stripPrefix "https://"
 
-fn cleanUrls :: RawUrl -> CleanUrl
-fn cleanUrls =
+let cleanUrls : RawUrl -> CleanUrl =
     transform [url] normalizeUrl >>
     map {
         id: .id,
@@ -28,7 +26,7 @@ fn cleanUrls =
         name_len: lenChars .name
     }
 
-fn main =
+main =
     read "input.parquet" as RawUrl
     |> cleanUrls
     sink "output.parquet"

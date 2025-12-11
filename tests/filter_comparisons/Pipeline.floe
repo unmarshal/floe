@@ -12,12 +12,11 @@ schema AffordableProduct {
     in_stock: Bool,
 }
 
-fn filterAffordable :: Product -> AffordableProduct
-fn filterAffordable =
+let filterAffordable : Product -> AffordableProduct =
     filter .price < 100
     >> filter .in_stock
 
-fn main =
+main =
     read "products.parquet" as Product
     |> filterAffordable
     sink "output.parquet"

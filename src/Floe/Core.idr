@@ -70,6 +70,9 @@ data FilterExpr : Schema -> Type where
   -- Comparison with integer literal (nullable column)
   FCompareIntMaybe : (col : String) -> (op : CmpOp) -> (val : Integer)
               -> (0 prf : HasCol s col (TMaybe TInt)) -> FilterExpr s
+  -- Comparison with a constant reference (for typed constants like maxAge)
+  FCompareConst : (col : String) -> (op : CmpOp) -> (constName : String) -> (constTy : Ty)
+               -> (0 prf : HasCol s col constTy) -> FilterExpr s
   -- Logical AND
   FAnd : FilterExpr s -> FilterExpr s -> FilterExpr s
   -- Logical OR
@@ -88,6 +91,12 @@ data MapExpr : Schema -> Ty -> Type where
   MStrLit : String -> MapExpr s TString
   -- Integer literal
   MIntLit : Integer -> MapExpr s TInt
+  -- Float literal
+  MFloatLit : Double -> MapExpr s TFloat
+  -- Bool literal
+  MBoolLit : Bool -> MapExpr s TBool
+  -- Constant reference (variable name and its type)
+  MConstRef : (name : String) -> (ty : Ty) -> MapExpr s ty
   -- If-then-else with non-nullable condition
   -- Both branches must have same type t, condition must be Bool (non-nullable)
   MIf : (cond : FilterExpr s) -> (thenE : MapExpr s t) -> (elseE : MapExpr s t) -> MapExpr s t

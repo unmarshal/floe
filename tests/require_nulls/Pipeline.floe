@@ -12,8 +12,7 @@ schema UserComplete {
     age: Int,
 }
 
-fn filterComplete :: UserInput -> UserComplete
-fn filterComplete =
+let filterComplete : UserInput -> UserComplete =
     require [name, age] >>
     map {
         id: .id,
@@ -21,7 +20,7 @@ fn filterComplete =
         age: .age
     }
 
-fn main =
+main =
     read "input.parquet" as UserInput
     |> filterComplete
     sink "output.parquet"

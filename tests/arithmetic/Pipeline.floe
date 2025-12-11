@@ -14,8 +14,7 @@ schema OrderSummary {
     profit_margin: Int,
 }
 
-fn calculateTotals :: Product -> OrderSummary
-fn calculateTotals =
+let calculateTotals : Product -> OrderSummary =
     map {
         name: .name,
         total: .price * .quantity,
@@ -23,7 +22,7 @@ fn calculateTotals =
         profit_margin: .price / 10 + 5
     }
 
-fn main =
+main =
     read "input.parquet" as Product
     |> calculateTotals
     sink "output.parquet"

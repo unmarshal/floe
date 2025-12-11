@@ -12,14 +12,13 @@ schema Output {
 }
 
 -- When condition uses nullable column, result type becomes Maybe
-fn categorizeNullable :: Input -> Output
-fn categorizeNullable =
+let categorizeNullable : Input -> Output =
     map {
         id: .id,
         category: if .maybe_value > 100 then "high" else "low"
     }
 
-fn main =
+main =
     read "input.parquet" as Input
     |> categorizeNullable
     sink "output.parquet"

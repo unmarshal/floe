@@ -37,6 +37,27 @@ preamble : List String
 preamble = ["import polars as pl", ""]
 
 -----------------------------------------------------------
+-- Constant Generation
+-----------------------------------------------------------
+
+-- Convert a ConstValue to its Python literal representation
+constValueToPython : ConstValue -> String
+constValueToPython (ConstStr s) = "\"" ++ s ++ "\""
+constValueToPython (ConstInt i) = show i
+constValueToPython (ConstFloat f) = show f
+constValueToPython (ConstBool True) = "True"
+constValueToPython (ConstBool False) = "False"
+
+-- Generate a single constant definition
+generateConst : (String, ConstValue) -> String
+generateConst (name, value) = name ++ " = " ++ constValueToPython value
+
+-- Generate all constant definitions
+generateConsts : List (String, ConstValue) -> List String
+generateConsts [] = []
+generateConsts consts = map generateConst consts ++ [""]
+
+-----------------------------------------------------------
 -- Schema Validation Generation
 -----------------------------------------------------------
 
@@ -79,7 +100,7 @@ schemaValidation schema strict =
 -----------------------------------------------------------
 
 covering
-generateFn : List (String, String) -> List SFnDef -> GeneratedFn -> List String
+generateFn : List (String, ConstValue) -> List SFnDef -> GeneratedFn -> List String
 generateFn consts fnDefs fn =
   let (sIn ** sOut ** pipeline) = fn.pipeline
       body = toPolarsWithConstsAndFns consts fnDefs pipeline "df"
@@ -139,13 +160,14 @@ export covering
 renderPolarsPython : GeneratedProgram -> String
 renderPolarsPython prog =
   let header = preamble
+      consts = generateConsts prog.consts
       tables = map generateTableBinding prog.tables
       tableSection = if null tables then [] else tables ++ [""]
       fns = concatMap (generateFn prog.consts prog.fnDefs) prog.functions
       entry = if null prog.entrySteps
               then []
               else generateEntry prog.entryParams prog.entrySteps (not prog.options.lenient)
-  in lines (header ++ tableSection ++ fns ++ entry)
+  in lines (header ++ consts ++ tableSection ++ fns ++ entry)
 
 -----------------------------------------------------------
 -- Backend Instance

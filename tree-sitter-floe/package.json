@@ -1,0 +1,59 @@
+{
+  "name": "tree-sitter-floe",
+  "version": "0.1.0",
+  "description": "Tree-sitter grammar for Floe data pipeline DSL",
+  "main": "bindings/node",
+  "types": "bindings/node",
+  "keywords": [
+    "tree-sitter",
+    "parser",
+    "floe",
+    "data-pipeline"
+  ],
+  "files": [
+    "grammar.js",
+    "binding.gyp",
+    "prebuilds/**",
+    "bindings/node/*",
+    "queries/*",
+    "src/**"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-username/tree-sitter-floe"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "node-addon-api": "^7.1.0",
+    "node-gyp-build": "^4.8.0"
+  },
+  "peerDependencies": {
+    "tree-sitter": "^0.21.0"
+  },
+  "peerDependenciesMeta": {
+    "tree_sitter": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "tree-sitter-cli": "^0.22.0",
+    "prebuildify": "^6.0.0"
+  },
+  "scripts": {
+    "build": "tree-sitter generate && tree-sitter build",
+    "test": "tree-sitter test",
+    "parse": "tree-sitter parse",
+    "install": "node-gyp-build",
+    "prebuildify": "prebuildify --napi --strip"
+  },
+  "tree-sitter": [
+    {
+      "scope": "source.floe",
+      "file-types": [
+        "floe"
+      ],
+      "highlights": "queries/highlights.scm",
+      "injection-regex": "^floe$"
+    }
+  ]
+}

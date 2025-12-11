@@ -51,8 +51,7 @@ testElabRename =
   let src = """
 schema A { old: String, }
 schema B { new: String, }
-fn t :: A -> B
-fn t = rename old new
+let t : A -> B = rename old new
 """
   in case elabCheck src of
        Right () => pass "elab rename"
@@ -63,8 +62,7 @@ testElabDrop =
   let src = """
 schema A { a: String, b: String, }
 schema B { a: String, }
-fn t :: A -> B
-fn t = drop [b]
+let t : A -> B = drop [b]
 """
   in case elabCheck src of
        Right () => pass "elab drop"
@@ -75,8 +73,7 @@ testElabSelect =
   let src = """
 schema A { a: String, b: String, c: String, }
 schema B { a: String, c: String, }
-fn t :: A -> B
-fn t = select [a, c]
+let t : A -> B = select [a, c]
 """
   in case elabCheck src of
        Right () => pass "elab select"
@@ -87,8 +84,7 @@ testElabMap =
   let src = """
 schema A { x: String, y: Int, }
 schema B { a: String, b: Int, }
-fn t :: A -> B
-fn t = map { a: .x, b: .y }
+let t : A -> B = map { a: .x, b: .y }
 """
   in case elabCheck src of
        Right () => pass "elab map"
@@ -99,8 +95,7 @@ testElabChain =
   let src = """
 schema A { old: String, extra: Int, }
 schema B { new: String, }
-fn t :: A -> B
-fn t = rename old new >> drop [extra]
+let t : A -> B = rename old new >> drop [extra]
 """
   in case elabCheck src of
        Right () => pass "elab chain"
@@ -113,8 +108,7 @@ schema User { id: String, name: String, }
 schema Order { oid: String, user_id: String, }
 schema R { oid: String, name: String, }
 let users = read "users.parquet" as User
-fn t :: Order -> R
-fn t = join users on .user_id == .id >> map { oid: .oid, name: .name }
+let t : Order -> R = join users on .user_id == .id >> map { oid: .oid, name: .name }
 """
   in case elabCheck src of
        Right () => pass "elab join"
@@ -125,8 +119,7 @@ testElabFilter =
   let src = """
 schema A { x: String, active: Bool, }
 schema B { x: String, active: Bool, }
-fn t :: A -> B
-fn t = filter .active
+let t : A -> B = filter .active
 """
   in case elabCheck src of
        Right () => pass "elab filter"
@@ -137,8 +130,7 @@ testElabRequire =
   let src = """
 schema A { x: Maybe String, }
 schema B { x: String, }
-fn t :: A -> B
-fn t = require [x]
+let t : A -> B = require [x]
 """
   in case elabCheck src of
        Right () => pass "elab require"
@@ -153,8 +145,7 @@ testElabColumnNotFound =
   let src = """
 schema A { x: String, }
 schema B { y: String, }
-fn t :: A -> B
-fn t = rename nonexistent y
+let t : A -> B = rename nonexistent y
 """
   in case elabExpectError src "not found" of
        Right () => pass "elab error: column not found"
@@ -165,8 +156,7 @@ testElabRenameCollision =
   let src = """
 schema A { x: String, y: String, }
 schema B { y: String, }
-fn t :: A -> B
-fn t = rename x y
+let t : A -> B = rename x y
 """
   in case elabExpectError src "already exists" of
        Right () => pass "elab error: rename collision"
@@ -177,8 +167,7 @@ testElabSchemaMismatch =
   let src = """
 schema A { x: String, }
 schema B { y: String, }
-fn t :: A -> B
-fn t = select [x]
+let t : A -> B = select [x]
 """
   in case elabExpectError src "mismatch" of
        Right () => pass "elab error: schema mismatch"
@@ -191,8 +180,7 @@ schema User { id: Int, name: String, }
 schema Order { oid: String, user_id: String, }
 schema R { oid: String, name: String, }
 let users = read "users.parquet" as User
-fn t :: Order -> R
-fn t = join users on .user_id == .id >> map { oid: .oid, name: .name }
+let t : Order -> R = join users on .user_id == .id >> map { oid: .oid, name: .name }
 """
   in case elabExpectError src "type mismatch" of
        Right () => pass "elab error: join type mismatch"
@@ -203,8 +191,7 @@ testElabFilterNonBool =
   let src = """
 schema A { x: String, }
 schema B { x: String, }
-fn t :: A -> B
-fn t = filter .x
+let t : A -> B = filter .x
 """
   in case elabExpectError src "Bool" of
        Right () => pass "elab error: filter non-bool"
@@ -215,8 +202,7 @@ testElabRequireNonNullable =
   let src = """
 schema A { x: String, }
 schema B { x: String, }
-fn t :: A -> B
-fn t = require [x]
+let t : A -> B = require [x]
 """
   in case elabExpectError src "nullable" of
        Right () => pass "elab error: require non-nullable"
@@ -226,20 +212,28 @@ testElabUndefinedSchema : TestResult
 testElabUndefinedSchema =
   let src = """
 schema A { x: String, }
-fn t :: A -> Undefined
-fn t = select [x]
+let t : A -> Undefined = select [x]
 """
   in case elabExpectError src "not defined" of
        Right () => pass "elab error: undefined schema"
        Left e => fail "elab error: undefined schema" e
+
+testElabUndefinedSchemaInMain : TestResult
+testElabUndefinedSchemaInMain =
+  let src = """
+schema Input { x: String, }
+main = read "input.parquet" as Undefined sink "output.parquet"
+"""
+  in case elabExpectError src "not defined" of
+       Right () => pass "elab error: undefined schema in main"
+       Left e => fail "elab error: undefined schema in main" e
 
 testElabTableNotFound : TestResult
 testElabTableNotFound =
   let src = """
 schema A { x: String, }
 schema B { x: String, }
-fn t :: A -> B
-fn t = join nonexistent on .x == .x
+let t : A -> B = join nonexistent on .x == .x
 """
   in case elabExpectError src "not found" of
        Right () => pass "elab error: table not found"
@@ -254,8 +248,7 @@ testElabFilterIntComparison =
   let src = """
 schema A { age: Int, name: String, }
 schema B { age: Int, name: String, }
-fn t :: A -> B
-fn t = filter .age > 18
+let t : A -> B = filter .age > 18
 """
   in case elabCheck src of
        Right () => pass "elab filter int comparison"
@@ -266,8 +259,7 @@ testElabFilterStringComparison =
   let src = """
 schema A { status: String, name: String, }
 schema B { status: String, name: String, }
-fn t :: A -> B
-fn t = filter .status == "active"
+let t : A -> B = filter .status == "active"
 """
   in case elabCheck src of
        Right () => pass "elab filter string comparison"
@@ -278,8 +270,7 @@ testElabFilterColumnComparison =
   let src = """
 schema A { x: Int, y: Int, }
 schema B { x: Int, y: Int, }
-fn t :: A -> B
-fn t = filter .x < .y
+let t : A -> B = filter .x < .y
 """
   in case elabCheck src of
        Right () => pass "elab filter column comparison"
@@ -290,8 +281,7 @@ testElabFilterStringColumnComparison =
   let src = """
 schema A { name: String, other_name: String, }
 schema B { name: String, other_name: String, }
-fn t :: A -> B
-fn t = filter .name == .other_name
+let t : A -> B = filter .name == .other_name
 """
   in case elabCheck src of
        Right () => pass "elab filter string column comparison"
@@ -302,8 +292,7 @@ testElabFilterComparisonTypeMismatch =
   let src = """
 schema A { age: String, name: String, }
 schema B { age: String, name: String, }
-fn t :: A -> B
-fn t = filter .age > 18
+let t : A -> B = filter .age > 18
 """
   in case elabExpectError src "Int" of
        Right () => pass "elab error: filter comparison type mismatch"
@@ -314,12 +303,109 @@ testElabFilterColumnComparisonTypeMismatch =
   let src = """
 schema A { x: Int, y: String, }
 schema B { x: Int, y: String, }
-fn t :: A -> B
-fn t = filter .x == .y
+let t : A -> B = filter .x == .y
 """
   in case elabExpectError src "same type" of
        Right () => pass "elab error: filter column comparison type mismatch"
        Left e => fail "elab error: filter column comparison type mismatch" e
+
+-----------------------------------------------------------
+-- Typed Constants Tests
+-----------------------------------------------------------
+
+testElabConstantInt : TestResult
+testElabConstantInt =
+  let src = """
+let minAge : Int = 18
+schema A { age: Int, }
+schema B { age: Int, }
+let t : A -> B = filter .age >= minAge
+"""
+  in case elabCheck src of
+       Right () => pass "elab constant int comparison"
+       Left e => fail "elab constant int comparison" e
+
+testElabConstantFloat : TestResult
+testElabConstantFloat =
+  let src = """
+let taxRate : Float = 0.08
+schema A { price: Float, }
+schema B { total: Float, }
+let t : A -> B = map { total: .price * taxRate }
+"""
+  in case elabCheck src of
+       Right () => pass "elab constant float in arithmetic"
+       Left e => fail "elab constant float in arithmetic" e
+
+testElabConstantString : TestResult
+testElabConstantString =
+  let src = """
+let prefix : String = "https://"
+schema A { url: String, }
+schema B { fullUrl: String, }
+let t : A -> B = map { fullUrl: prefix ++ .url }
+"""
+  in case elabCheck src of
+       Right () => pass "elab constant string concat"
+       Left e => fail "elab constant string concat" e
+
+testElabConstantBool : TestResult
+testElabConstantBool =
+  let src = """
+let defaultActive : Bool = True
+schema A { name: String, active: Bool, }
+schema B { name: String, active: Bool, }
+let t : A -> B = map { name: .name, active: defaultActive }
+"""
+  in case elabCheck src of
+       Right () => pass "elab constant bool"
+       Left e => fail "elab constant bool" e
+
+testElabConstantTypeMismatch : TestResult
+testElabConstantTypeMismatch =
+  let src = """
+let minAge : String = "eighteen"
+schema A { age: Int, }
+schema B { age: Int, }
+let t : A -> B = filter .age >= minAge
+"""
+  in case elabExpectError src "type" of
+       Right () => pass "elab error: constant type mismatch"
+       Left e => fail "elab error: constant type mismatch" e
+
+testElabConstantUndefined : TestResult
+testElabConstantUndefined =
+  let src = """
+schema A { age: Int, }
+schema B { age: Int, }
+let t : A -> B = filter .age >= unknownConst
+"""
+  in case elabExpectError src "Unknown constant" of
+       Right () => pass "elab error: undefined constant"
+       Left e => fail "elab error: undefined constant" e
+
+testElabConstantInIfCondition : TestResult
+testElabConstantInIfCondition =
+  let src = """
+let threshold : Int = 100
+schema A { value: Int, }
+schema B { category: String, }
+let t : A -> B = map { category: if .value >= threshold then "high" else "low" }
+"""
+  in case elabCheck src of
+       Right () => pass "elab constant in if condition"
+       Left e => fail "elab constant in if condition" e
+
+testElabBoolLiterals : TestResult
+testElabBoolLiterals =
+  let src = """
+schema A { age: Int, }
+schema B { isAdult: Bool, }
+let t : A -> B = map { isAdult: if .age >= 18 then True else False }
+"""
+  in case elabCheck src of
+       Right () => pass "elab bool literals True/False"
+       Left e => fail "elab bool literals True/False" e
 
 -----------------------------------------------------------
 -- Test Suite
@@ -343,6 +429,7 @@ elaborateTests = suite "Elaborate Tests"
   , testElabFilterNonBool
   , testElabRequireNonNullable
   , testElabUndefinedSchema
+  , testElabUndefinedSchemaInMain
   , testElabTableNotFound
   , testElabFilterIntComparison
   , testElabFilterStringComparison
@@ -350,4 +437,13 @@ elaborateTests = suite "Elaborate Tests"
   , testElabFilterComparisonTypeMismatch
   , testElabFilterColumnComparisonTypeMismatch
   , testElabFilterStringColumnComparison
+  -- Typed constants tests
+  , testElabConstantInt
+  , testElabConstantFloat
+  , testElabConstantString
+  , testElabConstantBool
+  , testElabConstantTypeMismatch
+  , testElabConstantUndefined
+  , testElabConstantInIfCondition
+  , testElabBoolLiterals
   ]

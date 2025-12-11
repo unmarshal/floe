@@ -12,25 +12,21 @@ schema CleanProduct {
     name: String,
     description: String,
     category: String,
-    name_length: Int64,
+    name_length: Int,
 }
 
 -- Strip URL prefix from IDs
-fn stripPrefix :: String -> String
-fn stripPrefix = stripPrefix "https://example.com/products/"
+let stripUrlPrefix : String -> String = stripPrefix "https://example.com/products/"
 
 -- Normalize text: trim whitespace and lowercase
-fn normalizeText :: String -> String
-fn normalizeText = trim >> toLowercase
+let normalizeText : String -> String = trim >> toLowercase
 
 -- Chain multiple transformations
-fn cleanCategory :: String -> String
-fn cleanCategory = trim >> toLowercase >> replace " " "_"
+let cleanCategory : String -> String = trim >> toLowercase >> replace " " "_"
 
 -- Apply builtins to clean product data
-fn cleanProduct :: RawProduct -> CleanProduct
-fn cleanProduct =
-    transform [sku] stripPrefix >>
+let cleanProduct : RawProduct -> CleanProduct =
+    transform [sku] stripUrlPrefix >>
     transform [name, description] normalizeText >>
     transform [category] cleanCategory >>
     map {

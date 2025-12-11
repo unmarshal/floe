@@ -72,7 +72,7 @@ The Typed IR uses dependent types to encode schema correctness. When elaboration
 
 ## DSL Syntax
 
-```idris
+```
 -- Schema definitions
 schema RawUser {
     user_id: String,
@@ -87,24 +87,29 @@ schema User {
     email: String,
 }
 
--- Pipeline functions with type signatures
-fn cleanUser :: RawUser -> User
-fn cleanUser =
+-- Pipeline bindings with type annotation
+let cleanUser : RawUser -> User =
     rename user_id id >>
     rename full_name name >>
     rename email_address email >>
     drop [is_active]
 
 -- Entry point
-fn main input output =
-    read input as RawUser
+main =
+    read "input.parquet" as RawUser
     |> cleanUser
-    write output
+    write "output.parquet"
+
+-- Typed constants
+let minPrice : Int = 100
+
+-- Column functions (scalar transformers)
+let normalizeUrl : String -> String = trim >> toLowercase >> stripPrefix "https://"
 
 -- Conditional expressions in map
 schema Product {
     name: String,
-    price: Int64,
+    price: Int,
     in_stock: Bool,
 }
 
@@ -114,14 +119,21 @@ schema LabeledProduct {
     availability: String,
 }
 
-fn labelProducts :: Product -> LabeledProduct
-fn labelProducts =
+let labelProducts : Product -> LabeledProduct =
     map {
         name: .name,
-        price_tier: if .price > 100 then "premium" else "budget",
+        price_tier: if .price > minPrice then "premium" else "budget",
         availability: if .in_stock then "available" else "out of stock"
     }
 ```
+
+### Binding Types
+
+All bindings use the unified syntax `let name : Type = value`:
+
+- **Constants**: `let minAge : Int = 18` - typed constants usable in expressions
+- **Pipelines**: `let transform : SchemaA -> SchemaB = ops...` - schema transformations
+- **Column functions**: `let fn : String -> String = builtins...` - scalar transformers
 
 ### Operations
 
@@ -149,7 +161,7 @@ fn labelProducts =
 
 ### Types
 
-`Int64`, `Float`, `Decimal(precision, scale)`, `String`, `Bool`, `List T`, `Maybe T`
+`Int`, `Float`, `Decimal(precision, scale)`, `String`, `Bool`, `List T`, `Maybe T`
 
 ### Decimal Type
 
@@ -224,10 +236,13 @@ data FilterExpr : Schema -> Type where
                -> (0 prf1 : HasCol s col1 t) -> (0 prf2 : HasCol s col2 t) -> FilterExpr s
   -- Column vs integer: .age > 18
   FCompareInt : (col : String) -> (op : CmpOp) -> (val : Integer)
-              -> (0 prf : HasCol s col TInt64) -> FilterExpr s
+              -> (0 prf : HasCol s col TInt) -> FilterExpr s
   -- Column vs integer (nullable): .maybe_age > 18
   FCompareIntMaybe : (col : String) -> (op : CmpOp) -> (val : Integer)
-              -> (0 prf : HasCol s col (TMaybe TInt64)) -> FilterExpr s
+              -> (0 prf : HasCol s col (TMaybe TInt)) -> FilterExpr s
+  -- Column vs typed constant: .age >= minAge
+  FCompareConst : (col : String) -> (op : CmpOp) -> (constName : String) -> (constTy : Ty)
+               -> (0 prf : HasCol s col constTy) -> FilterExpr s
   -- Logical combinators
   FAnd : FilterExpr s -> FilterExpr s -> FilterExpr s
   FOr : FilterExpr s -> FilterExpr s -> FilterExpr s
@@ -243,7 +258,18 @@ data MapExpr : Schema -> Ty -> Type where
   MCol : (col : String) -> (0 prf : HasCol s col t) -> MapExpr s t
   -- Literals
   MStrLit : String -> MapExpr s TString
-  MIntLit : Integer -> MapExpr s TInt64
+  MIntLit : Integer -> MapExpr s TInt
+  MFloatLit : Double -> MapExpr s TFloat
+  MBoolLit : Bool -> MapExpr s TBool
+  -- Constant reference (looks up typed constant from context)
+  MConstRef : (name : String) -> (ty : Ty) -> MapExpr s ty
+  -- Arithmetic operations
+  MAdd : MapExpr s t -> MapExpr s t -> MapExpr s t
+  MSub : MapExpr s t -> MapExpr s t -> MapExpr s t
+  MMul : MapExpr s t -> MapExpr s t -> MapExpr s t
+  MDiv : MapExpr s t -> MapExpr s t -> MapExpr s t
+  -- String concatenation
+  MConcat : MapExpr s TString -> MapExpr s TString -> MapExpr s TString
   -- If-then-else with non-nullable condition (result type t)
   MIf : (cond : FilterExpr s) -> (thenE : MapExpr s t) -> (elseE : MapExpr s t) -> MapExpr s t
   -- If-then-else with nullable condition (result type Maybe t)

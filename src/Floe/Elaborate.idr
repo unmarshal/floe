@@ -21,10 +21,11 @@ record Context where
   schemas : List (String, Schema)  -- named schemas
   tables : List (String, String, Schema)  -- table bindings: (name, file, schema)
   scalarFns : List (String, Ty, Ty)  -- scalar functions: (name, inTy, outTy)
+  constants : List (String, ConstValue)  -- typed constants
 
 public export
 emptyCtx : Context
-emptyCtx = MkCtx [] [] []
+emptyCtx = MkCtx [] [] [] []
 
 public export
 addSchema : String -> Schema -> Context -> Context
@@ -57,6 +58,14 @@ lookupScalarFn nm ctx = go ctx.scalarFns
     go : List (String, Ty, Ty) -> Maybe (Ty, Ty)
     go [] = Nothing
     go ((n, i, o) :: rest) = if n == nm then Just (i, o) else go rest
+
+public export
+addConstant : String -> ConstValue -> Context -> Context
+addConstant nm val ctx = { constants := (nm, val) :: ctx.constants } ctx
+
+public export
+lookupConstant : String -> Context -> Maybe ConstValue
+lookupConstant nm ctx = lookup nm ctx.constants
 
 -----------------------------------------------------------
 -- Parse Type Names
@@ -159,6 +168,9 @@ processMapFields (SFieldAssign _ newName expr :: rest) =
        SIf _ _ _ _ => PFExpr newName expr :: assigns  -- If-then-else expression
        SStrLit _ _ => PFExpr newName expr :: assigns  -- String literal
        SIntLit _ _ => PFExpr newName expr :: assigns  -- Integer literal
+       SFloatLit _ _ => PFExpr newName expr :: assigns -- Float literal
+       SBoolLit _ _ => PFExpr newName expr :: assigns  -- Boolean literal
+       SVar _ _ => PFExpr newName expr :: assigns      -- Variable/constant reference
        SAdd _ _ _ => PFExpr newName expr :: assigns   -- Arithmetic: addition
        SSub _ _ _ => PFExpr newName expr :: assigns   -- Arithmetic: subtraction
        SMul _ _ _ => PFExpr newName expr :: assigns   -- Arithmetic: multiplication
@@ -237,14 +249,21 @@ anyNullable s (col :: cols) =
 
 -- Infer type from surface expression (for schema computation)
 -- This is a simple inference that doesn't do full elaboration
-inferExprTy : Schema -> SExpr -> Ty
-inferExprTy s (SColRef _ col) = getColType s col
-inferExprTy s (SColRefNullCheck _ col) = getColType s col
-inferExprTy s (SStrLit _ _) = TString
-inferExprTy s (SIntLit _ _) = TInt
-inferExprTy s (SIf _ cond thenE elseE) =
+inferExprTy : Context -> Schema -> SExpr -> Ty
+inferExprTy ctx s (SColRef _ col) = getColType s col
+inferExprTy ctx s (SColRefNullCheck _ col) = getColType s col
+inferExprTy ctx s (SStrLit _ _) = TString
+inferExprTy ctx s (SIntLit _ _) = TInt
+inferExprTy ctx s (SFloatLit _ _) = TFloat
+inferExprTy ctx s (SBoolLit _ _) = TBool
+inferExprTy ctx s (SVar _ name) =
+  -- Look up constant type
+  case lookupConstant name ctx of
+    Just constVal => constValueTy constVal
+    Nothing => TString  -- Fallback for unknown constants
+inferExprTy ctx s (SIf _ cond thenE elseE) =
   -- Check if condition uses nullable columns (simplified check)
-  let baseTy = inferExprTy s thenE
+  let baseTy = inferExprTy ctx s thenE
       condCols = collectExprCols cond
       isNullable = anyNullable s condCols
   in if isNullable then TMaybe baseTy else baseTy
@@ -262,72 +281,72 @@ inferExprTy s (SIf _ cond thenE elseE) =
     collectExprCols (SOr _ l r) = collectExprCols l ++ collectExprCols r
     collectExprCols _ = []
 -- Arithmetic: infer type from left operand (both should be same type)
-inferExprTy s (SAdd _ l r) = inferExprTy s l
-inferExprTy s (SSub _ l r) = inferExprTy s l
-inferExprTy s (SMul _ l r) = inferExprTy s l
-inferExprTy s (SDiv _ l r) = inferExprTy s l
-inferExprTy s _ = TString  -- Default fallback
+inferExprTy ctx s (SAdd _ l r) = inferExprTy ctx s l
+inferExprTy ctx s (SSub _ l r) = inferExprTy ctx s l
+inferExprTy ctx s (SMul _ l r) = inferExprTy ctx s l
+inferExprTy ctx s (SDiv _ l r) = inferExprTy ctx s l
+inferExprTy ctx s _ = TString  -- Default fallback
 
 -- Convert a single processed field to a column in the output schema
-fieldToCol : Schema -> ProcessedField -> Col
-fieldToCol srcSchema (PFColAssign newName oldName) = MkCol newName (getColType srcSchema oldName)
-fieldToCol srcSchema (PFHashAssign newName _) = MkCol newName TString
-fieldToCol srcSchema (PFFnApp newName _ colName) = MkCol newName (getColType srcSchema colName)
-fieldToCol srcSchema (PFBuiltinApp newName builtin colName) =
+fieldToCol : Context -> Schema -> ProcessedField -> Col
+fieldToCol ctx srcSchema (PFColAssign newName oldName) = MkCol newName (getColType srcSchema oldName)
+fieldToCol ctx srcSchema (PFHashAssign newName _) = MkCol newName TString
+fieldToCol ctx srcSchema (PFFnApp newName _ colName) = MkCol newName (getColType srcSchema colName)
+fieldToCol ctx srcSchema (PFBuiltinApp newName builtin colName) =
   MkCol newName (builtinOutputTy builtin (getColType srcSchema colName))
-fieldToCol srcSchema (PFExpr newName expr) = MkCol newName (inferExprTy srcSchema expr)
+fieldToCol ctx srcSchema (PFExpr newName expr) = MkCol newName (inferExprTy ctx srcSchema expr)
 
 -- Convert processed fields to schema (preserving order)
-fieldsToSchema : Schema -> List ProcessedField -> Schema
-fieldsToSchema srcSchema [] = []
-fieldsToSchema srcSchema (f :: rest) = fieldToCol srcSchema f :: fieldsToSchema srcSchema rest
+fieldsToSchema : Context -> Schema -> List ProcessedField -> Schema
+fieldsToSchema ctx srcSchema [] = []
+fieldsToSchema ctx srcSchema (f :: rest) = fieldToCol ctx srcSchema f :: fieldsToSchema ctx srcSchema rest
 
 -- Compute output schema for map operation
 -- Preserves the order of fields as specified in the map expression
-computeMapSchema : Schema -> List ProcessedField -> Schema
-computeMapSchema srcSchema fields = fieldsToSchema srcSchema fields
+computeMapSchema : Context -> Schema -> List ProcessedField -> Schema
+computeMapSchema ctx srcSchema fields = fieldsToSchema ctx srcSchema fields
 
 -- Forward declaration for MapExprResult and elabMapExpr (defined after elabFilterExpr)
 data MapExprResult : Schema -> Type where
   MkMapExprResult : (t : Ty) -> MapExpr s t -> MapExprResult s
 
-elabMapExpr : Span -> (s : Schema) -> SExpr -> Result (MapExprResult s)
+elabMapExpr : Context -> Span -> (s : Schema) -> SExpr -> Result (MapExprResult s)
 
 -- Arithmetic operator enum
 data ArithOp = AOAdd | AOSub | AOMul | AODiv
 
 -- Forward declaration for arithmetic helper
-elabArithOp : Span -> (s : Schema) -> ArithOp -> SExpr -> SExpr -> Result (MapExprResult s)
+elabArithOp : Context -> Span -> (s : Schema) -> ArithOp -> SExpr -> SExpr -> Result (MapExprResult s)
 
 -- Convert a single ProcessedField to a MapAssign with proof
 -- Returns Nothing if the column doesn't exist
-elabMapAssign : Span -> (s : Schema) -> ProcessedField -> Result (MapAssign s)
-elabMapAssign span s (PFColAssign new old) =
+elabMapAssign : Context -> Span -> (s : Schema) -> ProcessedField -> Result (MapAssign s)
+elabMapAssign ctx span s (PFColAssign new old) =
   case findCol s old of
     Just (MkColProof t prf) => ok (ColAssign new old prf)
     Nothing => err (ColNotFound span old s)
-elabMapAssign span s (PFHashAssign new cols) =
+elabMapAssign ctx span s (PFHashAssign new cols) =
   case findAllCols s cols of
     Just prf => ok (HashAssign new cols prf)
     Nothing => err (ParseError span "One or more columns not found in hash")
-elabMapAssign span s (PFFnApp new fn col) =
+elabMapAssign ctx span s (PFFnApp new fn col) =
   case findCol s col of
     Just (MkColProof t prf) => ok (FnAppAssign new fn col prf)
     Nothing => err (ColNotFound span col s)
-elabMapAssign span s (PFBuiltinApp new builtin col) =
+elabMapAssign ctx span s (PFBuiltinApp new builtin col) =
   case findCol s col of
     Just (MkColProof t prf) => ok (BuiltinAppAssign new builtin col prf)
     Nothing => err (ColNotFound span col s)
-elabMapAssign span s (PFExpr new expr) = do
-  MkMapExprResult ty mapExpr <- elabMapExpr span s expr
+elabMapAssign ctx span s (PFExpr new expr) = do
+  MkMapExprResult ty mapExpr <- elabMapExpr ctx span s expr
   ok (ExprAssign new ty mapExpr)
 
 -- Convert ProcessedField list to MapAssign list with proofs
-elabMapAssignsWithSpan : Span -> (s : Schema) -> List ProcessedField -> Result (List (MapAssign s))
-elabMapAssignsWithSpan span s [] = ok []
-elabMapAssignsWithSpan span s (f :: rest) = do
-  assign <- elabMapAssign span s f
-  assigns <- elabMapAssignsWithSpan span s rest
+elabMapAssignsWithSpan : Context -> Span -> (s : Schema) -> List ProcessedField -> Result (List (MapAssign s))
+elabMapAssignsWithSpan ctx span s [] = ok []
+elabMapAssignsWithSpan ctx span s (f :: rest) = do
+  assign <- elabMapAssign ctx span s f
+  assigns <- elabMapAssignsWithSpan ctx span s rest
   ok (assign :: assigns)
 
 -----------------------------------------------------------
@@ -348,32 +367,32 @@ extractCmpOp (SGte _ l r) = Just (l, CmpGte, r)
 extractCmpOp _ = Nothing
 
 -- Elaborate a filter expression to typed FilterExpr
-elabFilterExpr : Span -> (s : Schema) -> SExpr -> Result (FilterExpr s)
+elabFilterExpr : Context -> Span -> (s : Schema) -> SExpr -> Result (FilterExpr s)
 -- Simple column reference (must be Bool)
-elabFilterExpr span s (SColRef _ col) =
+elabFilterExpr ctx span s (SColRef _ col) =
   case findColWithTy s col TBool of
     Just prf => ok (FCol col prf)
     Nothing => case getColTy s col of
       Nothing => err (ColNotFound span col s)
       Just t => err (ColNotBool span col t)
-elabFilterExpr span s (SColRefNullCheck _ col) =
+elabFilterExpr ctx span s (SColRefNullCheck _ col) =
   case findColWithTy s col TBool of
     Just prf => ok (FCol col prf)
     Nothing => case getColTy s col of
       Nothing => err (ColNotFound span col s)
       Just t => err (ColNotBool span col t)
 -- Logical AND
-elabFilterExpr span s (SAnd _ l r) = do
-  lExpr <- elabFilterExpr span s l
-  rExpr <- elabFilterExpr span s r
+elabFilterExpr ctx span s (SAnd _ l r) = do
+  lExpr <- elabFilterExpr ctx span s l
+  rExpr <- elabFilterExpr ctx span s r
   ok (FAnd lExpr rExpr)
 -- Logical OR
-elabFilterExpr span s (SOr _ l r) = do
-  lExpr <- elabFilterExpr span s l
-  rExpr <- elabFilterExpr span s r
+elabFilterExpr ctx span s (SOr _ l r) = do
+  lExpr <- elabFilterExpr ctx span s l
+  rExpr <- elabFilterExpr ctx span s r
   ok (FOr lExpr rExpr)
 -- Comparison expressions
-elabFilterExpr span s expr =
+elabFilterExpr ctx span s expr =
   case extractCmpOp expr of
     Just (SColRef _ col1, op, SColRef _ col2) =>
       -- .col1 op .col2
@@ -389,12 +408,23 @@ elabFilterExpr span s expr =
         Just prf => ok (FCompareInt col op val prf)
         Nothing => case findColWithTy s col (TMaybe TInt) of
           Just prf => ok (FCompareIntMaybe col op val prf)
-          Nothing => err (ParseError span ("Column '" ++ col ++ "' must be Int64 or Maybe Int64 for integer comparison"))
+          Nothing => err (ParseError span ("Column '" ++ col ++ "' must be Int or Maybe Int for integer comparison"))
     Just (SColRef _ col, op, SStrLit _ val) =>
       -- .col op "string"
       case findCol s col of
         Nothing => err (ColNotFound span col s)
         Just (MkColProof t prf) => ok (FCompareCol col op val prf)
+    Just (SColRef _ col, op, SVar _ constName) =>
+      -- .col op constant (e.g., .age >= minAge)
+      case lookupConstant constName ctx of
+        Nothing => err (ParseError span ("Unknown constant '" ++ constName ++ "'"))
+        Just constVal =>
+          let constTy = constValueTy constVal
+          in case findColWithTy s col constTy of
+               Just prf => ok (FCompareConst col op constName constTy prf)
+               Nothing => case getColTy s col of
+                 Nothing => err (ColNotFound span col s)
+                 Just colTy => err (ParseError span ("Column '" ++ col ++ "' has type " ++ show colTy ++ " but constant '" ++ constName ++ "' has type " ++ show constTy))
     Just _ => err (ParseError span "Unsupported comparison expression")
     Nothing => err (ParseError span "Invalid filter expression")
 
@@ -409,6 +439,7 @@ filterExprCols (FCompareCol col _ _ _) = [col]
 filterExprCols (FCompareCols col1 _ col2 _ _) = [col1, col2]
 filterExprCols (FCompareInt col _ _ _) = [col]
 filterExprCols (FCompareIntMaybe col _ _ _) = [col]
+filterExprCols (FCompareConst col _ _ _ _) = [col]
 filterExprCols (FAnd l r) = filterExprCols l ++ filterExprCols r
 filterExprCols (FOr l r) = filterExprCols l ++ filterExprCols r
 
@@ -464,27 +495,27 @@ coerceLiteral s i TFloat = believe_me (MIntLit {s} i)  -- Polars handles int -> 
 coerceLiteral s i (TDecimal _ _) = believe_me (MIntLit {s} i)  -- Polars handles int -> decimal
 coerceLiteral s i _ = believe_me (MIntLit {s} i)  -- Fallback
 
-elabArithOp span s op left right = do
+elabArithOp ctx span s op left right = do
   -- Check for literal coercion cases first
   case (getIntLit left, getIntLit right) of
     -- Left is literal, right is not - coerce left to right's type
     (Just leftVal, Nothing) => do
-      MkMapExprResult rightTy rightExpr <- elabMapExpr span s right
+      MkMapExprResult rightTy rightExpr <- elabMapExpr ctx span s right
       if isNumericTy rightTy
         then let leftExpr = coerceLiteral s leftVal rightTy
              in ok (MkMapExprResult rightTy (applyArithOp op leftExpr rightExpr))
         else err (ParseError span ("Arithmetic requires numeric types, got: " ++ show rightTy))
     -- Right is literal, left is not - coerce right to left's type
     (Nothing, Just rightVal) => do
-      MkMapExprResult leftTy leftExpr <- elabMapExpr span s left
+      MkMapExprResult leftTy leftExpr <- elabMapExpr ctx span s left
       if isNumericTy leftTy
         then let rightExpr = coerceLiteral s rightVal leftTy
              in ok (MkMapExprResult leftTy (applyArithOp op leftExpr rightExpr))
         else err (ParseError span ("Arithmetic requires numeric types, got: " ++ show leftTy))
     -- Both literals or neither - use standard elaboration
     _ => do
-      MkMapExprResult leftTy leftExpr <- elabMapExpr span s left
-      MkMapExprResult rightTy rightExpr <- elabMapExpr span s right
+      MkMapExprResult leftTy leftExpr <- elabMapExpr ctx span s left
+      MkMapExprResult rightTy rightExpr <- elabMapExpr ctx span s right
       buildArith span op leftTy leftExpr rightTy rightExpr
   where
     buildArith : Span -> ArithOp -> (t1 : Ty) -> MapExpr s t1 -> (t2 : Ty) -> MapExpr s t2 -> Result (MapExprResult s)
@@ -509,25 +540,36 @@ elabArithOp span s op left right = do
             _ => err (ParseError span ("Arithmetic operands have different types: " ++ show t1 ++ " vs " ++ show t2))
 
 -- Column reference
-elabMapExpr span s (SColRef _ col) =
+elabMapExpr ctx span s (SColRef _ col) =
   case findCol s col of
     Nothing => err (ColNotFound span col s)
     Just (MkColProof t prf) => ok (MkMapExprResult t (MCol col prf))
-elabMapExpr span s (SColRefNullCheck _ col) =
+elabMapExpr ctx span s (SColRefNullCheck _ col) =
   case findCol s col of
     Nothing => err (ColNotFound span col s)
     Just (MkColProof t prf) => ok (MkMapExprResult t (MCol col prf))
+-- Variable reference (constant lookup)
+elabMapExpr ctx span s (SVar _ name) =
+  case lookupConstant name ctx of
+    Nothing => err (ParseError span ("Unknown constant '" ++ name ++ "'"))
+    Just constVal =>
+      let ty = constValueTy constVal
+      in ok (MkMapExprResult ty (MConstRef name ty))
 -- String literal
-elabMapExpr span s (SStrLit _ str) = ok (MkMapExprResult TString (MStrLit str))
+elabMapExpr ctx span s (SStrLit _ str) = ok (MkMapExprResult TString (MStrLit str))
 -- Integer literal
-elabMapExpr span s (SIntLit _ i) = ok (MkMapExprResult TInt (MIntLit i))
+elabMapExpr ctx span s (SIntLit _ i) = ok (MkMapExprResult TInt (MIntLit i))
+-- Float literal
+elabMapExpr ctx span s (SFloatLit _ f) = ok (MkMapExprResult TFloat (MFloatLit f))
+-- Boolean literal
+elabMapExpr ctx span s (SBoolLit _ b) = ok (MkMapExprResult TBool (MBoolLit b))
 -- If-then-else
-elabMapExpr span s (SIf _ cond thenE elseE) = do
+elabMapExpr ctx span s (SIf _ cond thenE elseE) = do
   -- Elaborate condition as FilterExpr
-  condExpr <- elabFilterExpr span s cond
+  condExpr <- elabFilterExpr ctx span s cond
   -- Elaborate both branches
-  MkMapExprResult thenTy thenExpr <- elabMapExpr span s thenE
-  MkMapExprResult elseTy elseExpr <- elabMapExpr span s elseE
+  MkMapExprResult thenTy thenExpr <- elabMapExpr ctx span s thenE
+  MkMapExprResult elseTy elseExpr <- elabMapExpr ctx span s elseE
   -- Check types match and build result
   elabIfBranches span s condExpr thenTy thenExpr elseTy elseExpr
   where
@@ -543,19 +585,19 @@ elabMapExpr span s (SIf _ cond thenE elseE) = do
             then ok (MkMapExprResult (TMaybe t1) (MIfNullable cond e1 e2))
             else ok (MkMapExprResult t1 (MIf cond e1 e2))
 -- Arithmetic operations
-elabMapExpr span s (SAdd _ left right) = elabArithOp span s AOAdd left right
-elabMapExpr span s (SSub _ left right) = elabArithOp span s AOSub left right
-elabMapExpr span s (SMul _ left right) = elabArithOp span s AOMul left right
-elabMapExpr span s (SDiv _ left right) = elabArithOp span s AODiv left right
-elabMapExpr span s (SConcat _ left right) = do
-  MkMapExprResult leftTy leftExpr <- elabMapExpr span s left
-  MkMapExprResult rightTy rightExpr <- elabMapExpr span s right
+elabMapExpr ctx span s (SAdd _ left right) = elabArithOp ctx span s AOAdd left right
+elabMapExpr ctx span s (SSub _ left right) = elabArithOp ctx span s AOSub left right
+elabMapExpr ctx span s (SMul _ left right) = elabArithOp ctx span s AOMul left right
+elabMapExpr ctx span s (SDiv _ left right) = elabArithOp ctx span s AODiv left right
+elabMapExpr ctx span s (SConcat _ left right) = do
+  MkMapExprResult leftTy leftExpr <- elabMapExpr ctx span s left
+  MkMapExprResult rightTy rightExpr <- elabMapExpr ctx span s right
   case (decEq leftTy TString, decEq rightTy TString) of
     (Yes Refl, Yes Refl) => ok (MkMapExprResult TString (MConcat leftExpr rightExpr))
     (No _, _) => err (ParseError span ("String concatenation requires String operands, left is: " ++ show leftTy))
     (_, No _) => err (ParseError span ("String concatenation requires String operands, right is: " ++ show rightTy))
 -- Other expressions not yet supported in map
-elabMapExpr span s expr = err (ParseError span ("Unsupported expression in map: " ++ show expr))
+elabMapExpr ctx span s expr = err (ParseError span ("Unsupported expression in map: " ++ show expr))
 
 -----------------------------------------------------------
 -- Elaborate Single Operation
@@ -595,14 +637,14 @@ elabOp ctx sIn (SRequire span names) =
 
 -- Filter on boolean expression
 elabOp ctx sIn (SFilter span expr) = do
-  filterExpr <- elabFilterExpr span sIn expr
+  filterExpr <- elabFilterExpr ctx span sIn expr
   ok (sIn ** Filter filterExpr Done)
 
 -- Map: field assignments defining new schema
 elabOp ctx sIn (SMap span fields) = do
   let processedFields = processMapFields fields
-  let outSchema = computeMapSchema sIn processedFields
-  assigns <- elabMapAssignsWithSpan span sIn processedFields
+  let outSchema = computeMapSchema ctx sIn processedFields
+  assigns <- elabMapAssignsWithSpan ctx span sIn processedFields
   ok (outSchema ** MapFields assigns Done)
 
 -- Transform: apply function to columns
@@ -742,6 +784,11 @@ elabSchemas ctx (s :: rest) = do
     Just _ => err (DuplicateSchema s.span nm)
     Nothing => elabSchemas (addSchema nm schema ctx) rest
 
+-- Register constants in context
+elabConstants : Context -> List (String, ConstValue) -> Context
+elabConstants ctx [] = ctx
+elabConstants ctx ((nm, val) :: rest) = elabConstants (addConstant nm val ctx) rest
+
 elabTableBinds : Context -> List STableBind -> Result Context
 elabTableBinds ctx [] = ok ctx
 elabTableBinds ctx (t :: rest) = do
@@ -762,6 +809,25 @@ validateLetBinds ctx sigs (b :: rest) = do
   _ <- elabLetBind ctx sigs b
   validateLetBinds ctx sigs rest
 
+-- Validate main entry point
+validateMainStep : Context -> SMainStep -> Result ()
+validateMainStep ctx (SRead sp file schemaName) =
+  case lookupSchema schemaName ctx of
+    Just _ => ok ()
+    Nothing => err (ParseError sp ("Schema '" ++ schemaName ++ "' is not defined"))
+validateMainStep ctx (SPipeThrough sp fnName) = ok ()  -- TODO: validate function exists
+validateMainStep ctx (SWrite sp file) = ok ()
+
+validateMain : Context -> Maybe SMain -> Result ()
+validateMain ctx Nothing = ok ()
+validateMain ctx (Just m) = go m.body
+  where
+    go : List SMainStep -> Result ()
+    go [] = ok ()
+    go (step :: rest) = do
+      validateMainStep ctx step
+      go rest
+
 -- Register scalar function types (e.g., fn strip_prefix :: String -> String)
 -- Skips pipeline type sigs (schema -> schema)
 elabScalarFnSigs : Context -> List STypeSig -> Context
@@ -771,17 +837,75 @@ elabScalarFnSigs ctx (sig :: rest) =
     (Just inT, Just outT) => elabScalarFnSigs (addScalarFn sig.name inT outT ctx) rest
     _ => elabScalarFnSigs ctx rest  -- Skip pipeline type sigs
 
+-----------------------------------------------------------
+-- Elaborate New-Style Bindings (let name : Type = value)
+-----------------------------------------------------------
+
+-- Register all bindings from new syntax into context
+-- - Constants go into ctx.constants
+-- - Column functions go into ctx.scalarFns
+-- - Pipelines are tracked for validation (not stored in context)
+elabBindings : Context -> List SBinding -> Context
+elabBindings ctx [] = ctx
+elabBindings ctx (b :: rest) =
+  let ctx' = case (b.ty, b.val) of
+               -- Constants: add to context
+               (SBTyConst _, SBValConst v) => addConstant b.name v ctx
+               -- Column functions: register as scalar functions
+               (SBTyColFn inTy outTy, _) => addScalarFn b.name (toCoreTy inTy) (toCoreTy outTy) ctx
+               -- Pipelines don't modify context (validated separately)
+               _ => ctx
+  in elabBindings ctx' rest
+
+-- Validate pipeline bindings (new syntax)
+validatePipelineBinding : Context -> SBinding -> Result ()
+validatePipelineBinding ctx b =
+  case (b.ty, b.val) of
+    (SBTyPipeline inName outName, SBValPipeline pipeline) => do
+      -- Look up input schema
+      sIn <- case lookupSchema inName ctx of
+        Nothing => err (SchemaNotFound b.span inName)
+        Just s => ok s
+      -- Elaborate the pipeline operations
+      case pipeline of
+        SPipeRef _ refName => err (ParseError b.span "Pipeline references not yet supported")
+        SPipe _ ops _ => do
+          (sOut ** _) <- elabOps ctx sIn ops
+          -- Validate output schema matches declared type
+          case lookupSchema outName ctx of
+            Nothing => err (SchemaNotFound b.span outName)
+            Just expectedOut =>
+              if schemasEqual sOut expectedOut
+                then ok ()
+                else err (SchemaMismatch b.span inName outName expectedOut sOut)
+    _ => ok ()  -- Not a pipeline binding, skip
+
+-- Validate all pipeline bindings from new syntax
+validatePipelineBindings : Context -> List SBinding -> Result ()
+validatePipelineBindings ctx [] = ok ()
+validatePipelineBindings ctx (b :: rest) = do
+  validatePipelineBinding ctx b
+  validatePipelineBindings ctx rest
+
 public export
 elabProgram : SProgram -> Result Context
 elabProgram prog = do
   -- First pass: elaborate all schema definitions
   ctx <- elabSchemas emptyCtx (getSchemas prog)
-  -- Second pass: register scalar function types
+  -- Second pass: register scalar function types (legacy syntax)
   let ctx = elabScalarFnSigs ctx (getTypeSigs prog)
-  -- Third pass: elaborate table bindings
+  -- Third pass: register constants (legacy syntax)
+  let ctx = elabConstants ctx (getConsts prog)
+  -- Fourth pass: register bindings from new syntax (constants + column functions)
+  let ctx = elabBindings ctx (getBindings prog)
+  -- Fifth pass: elaborate table bindings
   ctx <- elabTableBinds ctx (getTableBinds prog)
-  -- Fourth pass: elaborate transforms (just validate for now)
+  -- Sixth pass: elaborate transforms (just validate for now)
   validateTransforms ctx (getTransforms prog)
-  -- Fifth pass: elaborate let bindings
+  -- Seventh pass: elaborate let bindings (legacy syntax)
   validateLetBinds ctx (getTypeSigs prog) (getLetBinds prog)
+  -- Eighth pass: validate pipeline bindings (new syntax)
+  validatePipelineBindings ctx (getBindings prog)
+  -- Ninth pass: validate main entry point
+  validateMain ctx (getMain prog)
   ok ctx

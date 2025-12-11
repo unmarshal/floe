@@ -1,0 +1,10 @@
+[package]
+name = "floe"
+version = "0.1.0"
+description = "Syntax highlighting for the Floe data pipeline DSL"
+authors = ["Your Name <your.email@example.com>"]
+repository = "https://github.com/your-username/zed-floe"
+
+[grammars.floe]
+repository = "https://github.com/your-username/tree-sitter-floe"
+rev = "main"

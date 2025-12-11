@@ -10,11 +10,10 @@ schema MatchedEmployee {
     assigned_team: String,
 }
 
-fn filterMatched :: Employee -> MatchedEmployee
-fn filterMatched =
+let filterMatched : Employee -> MatchedEmployee =
     filter .department == .assigned_team
 
-fn main =
+main =
     read "employees.parquet" as Employee
     |> filterMatched
     sink "output.parquet"

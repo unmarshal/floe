@@ -15,8 +15,7 @@ schema InvoiceWithTax {
     doubled: Decimal(10, 2),
 }
 
-fn calculateTax :: Invoice -> InvoiceWithTax
-fn calculateTax =
+let calculateTax : Invoice -> InvoiceWithTax =
     map {
         id: .id,
         amount: .amount,
@@ -26,7 +25,7 @@ fn calculateTax =
         doubled: .amount * 2
     }
 
-fn main =
+main =
     read "input.parquet" as Invoice
     |> calculateTax
     sink "output.parquet"

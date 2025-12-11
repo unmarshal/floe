@@ -28,17 +28,17 @@ firstSchema prog = case getSchemas prog of
   (s :: _) => Just s
   [] => Nothing
 
--- Get first let bind
-firstLetBind : SProgram -> Maybe SLetBind
-firstLetBind prog = case getLetBinds prog of
+-- Get first binding from program
+firstBinding : SProgram -> Maybe SBinding
+firstBinding prog = case getBindings prog of
   (b :: _) => Just b
   [] => Nothing
 
--- Get first type sig
-firstTypeSig : SProgram -> Maybe STypeSig
-firstTypeSig prog = case getTypeSigs prog of
-  (s :: _) => Just s
-  [] => Nothing
+-- Check if binding has a pipeline value
+bindingPipeline : SBinding -> Maybe SPipeline
+bindingPipeline b = case b.val of
+  SBValPipeline p => Just p
+  _ => Nothing
 
 -----------------------------------------------------------
 -- Schema Parsing Tests
@@ -103,20 +103,21 @@ schema Data {
        Left e => fail "parse List type" e
 
 -----------------------------------------------------------
--- Type Signature Parsing Tests
+-- Binding Parsing Tests
 -----------------------------------------------------------
 
-testParseTypeSig : TestResult
-testParseTypeSig =
-  let src = "fn transform :: Input -> Output"
-      check = \p => case firstTypeSig p of
-                      Just sig => sig.name == "transform" &&
-                                  sig.inTy == "Input" &&
-                                  sig.outTy == "Output"
+testParseBinding : TestResult
+testParseBinding =
+  let src = "let transform : Input -> Output = rename old new"
+      check = \p => case firstBinding p of
+                      Just b => b.name == "transform" &&
+                                case b.ty of
+                                  SBTyPipeline "Input" "Output" => True
+                                  _ => False
                       Nothing => False
   in case parseAndCheck src check of
-       Right () => pass "parse type signature"
-       Left e => fail "parse type signature" e
+       Right () => pass "parse binding"
+       Left e => fail "parse binding" e
 
 -----------------------------------------------------------
 -- Operation Parsing Tests
@@ -127,12 +128,11 @@ testParseRename =
   let src = """
 schema A { old: String, }
 schema B { new: String, }
-fn t :: A -> B
-fn t = rename old new
+let t : A -> B = rename old new
 """
-      check = \p => case firstLetBind p of
-                      Just b => case b.pipeline of
-                        SPipe _ [SRename _ "old" "new"] _ => True
+      check = \p => case firstBinding p of
+                      Just b => case bindingPipeline b of
+                        Just (SPipe _ [SRename _ "old" "new"] _) => True
                         _ => False
                       Nothing => False
   in case parseAndCheck src check of
@@ -144,12 +144,11 @@ testParseDrop =
   let src = """
 schema A { a: String, b: String, c: String, }
 schema B { c: String, }
-fn t :: A -> B
-fn t = drop [a, b]
+let t : A -> B = drop [a, b]
 """
-      check = \p => case firstLetBind p of
-                      Just b => case b.pipeline of
-                        SPipe _ [SDrop _ cols] _ => cols == ["a", "b"]
+      check = \p => case firstBinding p of
+                      Just b => case bindingPipeline b of
+                        Just (SPipe _ [SDrop _ cols] _) => cols == ["a", "b"]
                         _ => False
                       Nothing => False
   in case parseAndCheck src check of
@@ -161,12 +160,11 @@ testParseSelect =
   let src = """
 schema A { a: String, b: String, c: String, }
 schema B { a: String, b: String, }
-fn t :: A -> B
-fn t = select [a, b]
+let t : A -> B = select [a, b]
 """
-      check = \p => case firstLetBind p of
-                      Just b => case b.pipeline of
-                        SPipe _ [SSelect _ cols] _ => cols == ["a", "b"]
+      check = \p => case firstBinding p of
+                      Just b => case bindingPipeline b of
+                        Just (SPipe _ [SSelect _ cols] _) => cols == ["a", "b"]
                         _ => False
                       Nothing => False
   in case parseAndCheck src check of
@@ -178,12 +176,11 @@ testParseMap =
   let src = """
 schema A { old: String, }
 schema B { new: String, }
-fn t :: A -> B
-fn t = map { new: .old }
+let t : A -> B = map { new: .old }
 """
-      check = \p => case firstLetBind p of
-                      Just b => case b.pipeline of
-                        SPipe _ [SMap _ fields] _ => length fields == 1
+      check = \p => case firstBinding p of
+                      Just b => case bindingPipeline b of
+                        Just (SPipe _ [SMap _ fields] _) => length fields == 1
                         _ => False
                       Nothing => False
   in case parseAndCheck src check of
@@ -197,12 +194,11 @@ schema User { id: String, name: String, }
 schema Order { oid: String, user_id: String, }
 schema R { oid: String, name: String, }
 let users = read "users.parquet" as User
-fn t :: Order -> R
-fn t = join users on .user_id == .id >> map { oid: .oid, name: .name }
+let t : Order -> R = join users on .user_id == .id >> map { oid: .oid, name: .name }
 """
-      check = \p => case firstLetBind p of
-                      Just b => case b.pipeline of
-                        SPipe _ (SJoin _ "users" joinOn :: _) _ =>
+      check = \p => case firstBinding p of
+                      Just b => case bindingPipeline b of
+                        Just (SPipe _ (SJoin _ "users" joinOn :: _) _) =>
                           joinOn.leftCol == "user_id" && joinOn.rightCol == "id"
                         _ => False
                       Nothing => False
@@ -219,12 +215,11 @@ testParsePipelineChain =
   let src = """
 schema A { a: String, b: String, }
 schema B { x: String, }
-fn t :: A -> B
-fn t = rename a x >> drop [b]
+let t : A -> B = rename a x >> drop [b]
 """
-      check = \p => case firstLetBind p of
-                      Just b => case b.pipeline of
-                        SPipe _ [SRename _ _ _, SDrop _ _] _ => True
+      check = \p => case firstBinding p of
+                      Just b => case bindingPipeline b of
+                        Just (SPipe _ [SRename _ _ _, SDrop _ _] _) => True
                         _ => False
                       Nothing => False
   in case parseAndCheck src check of
@@ -239,7 +234,7 @@ testParseMainSimple : TestResult
 testParseMainSimple =
   let src = """
 schema A { x: String, }
-fn main = read "in.parquet" as A sink "out.parquet"
+main = read "in.parquet" as A sink "out.parquet"
 """
       check = \p => case getMain p of
                       Just m => length m.body == 2
@@ -253,9 +248,8 @@ testParseMainWithPipe =
   let src = """
 schema A { x: String, }
 schema B { x: String, }
-fn t :: A -> B
-fn t = select [x]
-fn main = read "in.parquet" as A |> t sink "out.parquet"
+let t : A -> B = select [x]
+main = read "in.parquet" as A |> t sink "out.parquet"
 """
       check = \p => case getMain p of
                       Just m => length m.body == 3
@@ -313,17 +307,16 @@ testParseSchemaNameWithUnderscore =
        Left _ => pass "reject schema name with underscore"
        Right _ => fail "reject schema name with underscore" "Should have rejected underscore in schema name"
 
--- Function names CANNOT have underscores
-testParseFnNameWithUnderscore : TestResult
-testParseFnNameWithUnderscore =
+-- Binding names CANNOT have underscores
+testParseBindingNameWithUnderscore : TestResult
+testParseBindingNameWithUnderscore =
   let src = """
 schema A { x: String, }
-fn my_fn :: A -> A
-fn my_fn = select [x]
+let my_fn : A -> A = select [x]
 """
   in case parseFloe src of
-       Left _ => pass "reject fn name with underscore"
-       Right _ => fail "reject fn name with underscore" "Should have rejected underscore in function name"
+       Left _ => pass "reject binding name with underscore"
+       Right _ => fail "reject binding name with underscore" "Should have rejected underscore in binding name"
 
 -- Drop operation with underscored field names should work
 testParseDropWithUnderscores : TestResult
@@ -331,12 +324,11 @@ testParseDropWithUnderscores =
   let src = """
 schema A { user_id: String, first_name: String, }
 schema B { user_id: String, }
-fn t :: A -> B
-fn t = drop [first_name]
+let t : A -> B = drop [first_name]
 """
-      check = \p => case firstLetBind p of
-                      Just b => case b.pipeline of
-                        SPipe _ [SDrop _ cols] _ => cols == ["first_name"]
+      check = \p => case firstBinding p of
+                      Just b => case bindingPipeline b of
+                        Just (SPipe _ [SDrop _ cols] _) => cols == ["first_name"]
                         _ => False
                       Nothing => False
   in case parseAndCheck src check of
@@ -354,7 +346,7 @@ parserTests = suite "Parser Tests"
   , testParseSchemaWithCols
   , testParseMaybeType
   , testParseListType
-  , testParseTypeSig
+  , testParseBinding
   , testParseRename
   , testParseDrop
   , testParseSelect
@@ -366,6 +358,6 @@ parserTests = suite "Parser Tests"
   , testParseWithComments
   , testParseFieldWithUnderscore
   , testParseSchemaNameWithUnderscore
-  , testParseFnNameWithUnderscore
+  , testParseBindingNameWithUnderscore
   , testParseDropWithUnderscores
   ]

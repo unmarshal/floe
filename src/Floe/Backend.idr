@@ -53,7 +53,7 @@ public export
 record GeneratedProgram where
   constructor MkGeneratedProgram
   options : CompileOptions
-  consts : List (String, String)       -- constant definitions
+  consts : List (String, ConstValue)   -- constant definitions
   fnDefs : List SFnDef                 -- scalar function definitions
   tables : List TableBinding           -- global table bindings
   functions : List GeneratedFn         -- transform functions

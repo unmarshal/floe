@@ -18,7 +18,7 @@ public export
 data Token
   = TSchema
   | TLet
-  | TFn            -- fn
+
   | TRead          -- read
   | TAs            -- as
   | TWrite         -- write
@@ -61,13 +61,14 @@ data Token
   | TIdent String
   | TStrLit String
   | TIntLit Integer
+  | TFloatLit Double
   | TEOF
 
 public export
 Show Token where
   show TSchema = "schema"
   show TLet = "let"
-  show TFn = "fn"
+
   show TRead = "read"
   show TAs = "as"
   show TWrite = "write"
@@ -110,13 +111,14 @@ Show Token where
   show (TIdent s) = "identifier '" ++ s ++ "'"
   show (TStrLit s) = "string \"" ++ s ++ "\""
   show (TIntLit i) = "integer " ++ show i
+  show (TFloatLit f) = "float " ++ show f
   show TEOF = "end of file"
 
 public export
 Eq Token where
   TSchema == TSchema = True
   TLet == TLet = True
-  TFn == TFn = True
+
   TRead == TRead = True
   TAs == TAs = True
   TWrite == TWrite = True
@@ -159,6 +161,7 @@ Eq Token where
   TIdent x == TIdent y = x == y
   TStrLit x == TStrLit y = x == y
   TIntLit x == TIntLit y = x == y
+  TFloatLit x == TFloatLit y = x == y
   TEOF == TEOF = True
   _ == _ = False
 
@@ -247,8 +250,9 @@ lexString st = go [] (advance st)  -- skip opening quote
       ('\\' :: '\\' :: rest) => go (acc ++ ['\\']) (advanceN 2 st)
       (c :: rest) => go (acc ++ [c]) (advance st)
 
-lexNumber : LexState -> (Integer, LexState)
-lexNumber st = go 0 st
+-- Lex integer part, returns (value, state)
+lexIntPart : LexState -> (Integer, LexState)
+lexIntPart st = go 0 st
   where
     go : Integer -> LexState -> (Integer, LexState)
     go acc st = case st.input of
@@ -258,10 +262,44 @@ lexNumber st = go 0 st
           else (acc, st)
       [] => (acc, st)
 
+-- Lex a number (integer or float)
+-- Returns Left for integers, Right for floats
+lexNumber : LexState -> (Either Integer Double, LexState)
+lexNumber st =
+  let (intPart, st') = lexIntPart st
+  in case st'.input of
+       ('.' :: c :: rest) =>
+         if isDigit c
+           then -- It's a float: parse decimal part
+             let (fracDigits, st'') = lexFracPart (advance st')  -- skip the dot
+             in (Right (parseDouble intPart fracDigits), st'')
+           else -- Just an integer followed by a dot (e.g., field access)
+             (Left intPart, st')
+       _ => (Left intPart, st')
+  where
+    -- Lex fractional digits, returns the digits as a list
+    lexFracPart : LexState -> (List Char, LexState)
+    lexFracPart st = go [] st
+      where
+        go : List Char -> LexState -> (List Char, LexState)
+        go acc st = case st.input of
+          (c :: rest) =>
+            if isDigit c
+              then go (acc ++ [c]) (advance st)
+              else (acc, st)
+          [] => (acc, st)
+
+    -- Convert integer part and fractional digits to Double
+    parseDouble : Integer -> List Char -> Double
+    parseDouble intPart fracDigits =
+      let fracStr = pack fracDigits
+          fullStr = show intPart ++ "." ++ fracStr
+      in cast fullStr
+
 keyword : String -> Token
 keyword "schema" = TSchema
 keyword "let" = TLet
-keyword "fn" = TFn
+
 keyword "read" = TRead
 keyword "as" = TAs
 keyword "write" = TWrite
@@ -315,9 +353,11 @@ lexOne st =
       Right (MkTok endSpan (TStrLit s), st')
     (c :: _) =>
       if isDigit c
-        then let (n, st') = lexNumber st
+        then let (numResult, st') = lexNumber st
                  endSpan = MkSpan sp.line sp.col st'.line st'.col
-             in Right (MkTok endSpan (TIntLit n), st')
+             in case numResult of
+                  Left n => Right (MkTok endSpan (TIntLit n), st')
+                  Right f => Right (MkTok endSpan (TFloatLit f), st')
         else if isIdentStart c
           then let (name, st') = lexIdent st
                    endSpan = MkSpan sp.line sp.col st'.line st'.col
@@ -589,6 +629,12 @@ mutual
         (sp, _) <- pSpan st
         (e, st) <- pPrimaryExpr st
         Right (SListLen sp e, st)
+      TIdent "True" =>
+        -- Boolean literal True
+        Right (SBoolLit tok.span True, advanceP st)
+      TIdent "False" =>
+        -- Boolean literal False
+        Right (SBoolLit tok.span False, advanceP st)
       TIdent name =>
         -- Check if followed by a dot (column ref) -> function/builtin application
         let st' = advanceP st  -- skip identifier
@@ -1006,6 +1052,55 @@ isPrimitiveType _ = False
 -- Track type signatures we've seen to determine if let binding is fn or pipeline
 -- For now, we'll use a simpler approach: store type sigs and look them up
 
+-- Parse a binding type annotation after ':'
+-- Returns either a primitive type (for constants) or a schema->schema type (for pipelines)
+pBindingType : Parser SBindingTy
+pBindingType st = do
+  (firstTy, st') <- pIdent st
+  -- Check if it's a primitive type or a schema name
+  if isToken TArrow st'
+    then do
+      -- It's a function type: InSchema -> OutSchema or PrimTy -> PrimTy
+      ((), st'') <- expect TArrow st'
+      (secondTy, st''') <- pIdent st''
+      -- Check if both are primitive types (column function) or schema names (pipeline)
+      case (parsePrimTy firstTy, parsePrimTy secondTy) of
+        (Just inTy, Just outTy) => Right (SBTyColFn inTy outTy, st''')
+        _ => Right (SBTyPipeline firstTy secondTy, st''')
+    else
+      -- It's a simple type (constant)
+      case parsePrimTy firstTy of
+        Just ty => Right (SBTyConst ty, st')
+        Nothing => Left (ParseError (currentTok st).span ("Unknown type: " ++ firstTy ++ ". Expected Int, Float, String, or Bool"))
+  where
+    parsePrimTy : String -> Maybe STy
+    parsePrimTy "Int" = Just SInt
+    parsePrimTy "Float" = Just SFloat
+    parsePrimTy "String" = Just SString
+    parsePrimTy "Bool" = Just SBool
+    parsePrimTy _ = Nothing
+
+-- Parse a binding value after '='
+pBindingValue : SBindingTy -> Parser SBindingVal
+pBindingValue (SBTyConst _) st =
+  -- Expect a literal value
+  let tok = currentTok st
+  in case tok.tok of
+    TStrLit s => Right (SBValConst (ConstStr s), advanceP st)
+    TIntLit i => Right (SBValConst (ConstInt i), advanceP st)
+    TFloatLit f => Right (SBValConst (ConstFloat f), advanceP st)
+    TIdent "True" => Right (SBValConst (ConstBool True), advanceP st)
+    TIdent "False" => Right (SBValConst (ConstBool False), advanceP st)
+    _ => Left (ParseError tok.span ("Expected literal value, got " ++ show tok.tok))
+pBindingValue (SBTyPipeline _ _) st = do
+  -- Expect a pipeline
+  (pipeline, st') <- pPipeline st
+  Right (SBValPipeline pipeline, st')
+pBindingValue (SBTyColFn _ _) st = do
+  -- Expect a builtin chain
+  (chain, st') <- pBuiltinChain st
+  Right (SBValColFn chain, st')
+
 pTopLevel : Parser STopLevel
 pTopLevel st =
   let tok = currentTok st
@@ -1014,73 +1109,44 @@ pTopLevel st =
       (s, st') <- pSchema st
       Right (STLSchema s, st')
     TLet => do
-      -- let name = "constant" OR let name = read "file" as Schema
+      -- New unified syntax: let name : Type = value
+      -- Or table binding: let name = read "file" as Schema
       let st' = advanceP st  -- skip 'let'
       case pIdent st' of
         Left e => Left e
-        Right (name, st'') => do
-          ((), st''') <- expect TEquals st''
-          let nextTok = currentTok st'''
-          case nextTok.tok of
-            TRead => do
-              -- Table binding: let name = read "file" as Schema
-              let st'''' = advanceP st'''  -- skip 'read'
-              (file, st''''') <- pStrOrIdent st''''
-              ((), st'''''') <- expect TAs st'''''
-              (schemaName, st''''''') <- pIdent st''''''
-              Right (STLTableBind (MkSTableBind tok.span name file schemaName), st''''''')
-            TStrLit value => do
-              -- String constant: let name = "value"
-              let st'''' = advanceP st'''
-              Right (STLConst tok.span name value, st'''')
-            _ => Left (ParseError nextTok.span ("Expected string literal or 'read' after '=', got " ++ show nextTok.tok))
-    TFn => do
-      -- fn name :: Type -> Type (type signature)
-      -- fn name = body (function definition - pipeline or builtin chain)
-      -- fn main [params] = body (entry point)
-      let st' = advanceP st  -- skip 'fn'
-      case pIdent st' of
-        Left e => Left e
         Right (name, st'') =>
-          if name == "main"
+          if isToken TColon st''
             then do
-              -- It's the main entry point: fn main [params] = body
-              (params, st''') <- pMainParams st''
-              ((), st'''') <- expect TEquals st'''
-              (body, st''''') <- pMainBody st''''
-              Right (STLMain (MkSMain tok.span params body), st''''')
-            else if isToken TDoubleColon st''
-              then do
-                -- It's a type signature: fn name :: In -> Out
-                ((), st''') <- expect TDoubleColon st''
-                (inTy, st''') <- pIdent st'''
-                ((), st''') <- expect TArrow st'''
-                (outTy, st''') <- pIdent st'''
-                Right (STLTypeSig (MkSTypeSig tok.span name inTy outTy), st''')
-              else if isToken TEquals st''
-                then do
-                  -- It's a function definition: fn name = body
-                  ((), st''') <- expect TEquals st''
-                  -- If next token is a known builtin, parse as column fn def
-                  let nextTok = currentTok st'''
-                  case nextTok.tok of
-                    TIdent builtin =>
-                      if builtin `elem` ["stripPrefix", "stripSuffix", "replace", "toLowercase", "toUppercase", "trim", "cast", "lenChars"]
-                        then do
-                          (fndef, st'''') <- pFnDef tok.span name st'''
-                          Right (STLFnDef fndef, st'''')
-                        else do
-                          (pipeline, st'''') <- pPipeline st'''
-                          Right (STLLetBind (MkSLetBind tok.span name pipeline), st'''')
-                    _ => do
-                      (pipeline, st'''') <- pPipeline st'''
-                      Right (STLLetBind (MkSLetBind tok.span name pipeline), st'''')
-                else
-                  Left (ParseError tok.span "Expected '::' or '=' after fn name")
+              -- New syntax: let name : Type = value
+              ((), st''') <- expect TColon st''
+              (bindTy, st'''') <- pBindingType st'''
+              ((), st''''') <- expect TEquals st''''
+              (bindVal, st'''''') <- pBindingValue bindTy st'''''
+              Right (STLBinding (MkSBinding tok.span name bindTy bindVal), st'''''')
+            else do
+              -- Legacy or table binding: let name = ...
+              ((), st''') <- expect TEquals st''
+              let nextTok = currentTok st'''
+              case nextTok.tok of
+                TRead => do
+                  -- Table binding: let name = read "file" as Schema
+                  let st'''' = advanceP st'''  -- skip 'read'
+                  (file, st''''') <- pStrOrIdent st''''
+                  ((), st'''''') <- expect TAs st'''''
+                  (schemaName, st''''''') <- pIdent st''''''
+                  Right (STLTableBind (MkSTableBind tok.span name file schemaName), st''''''')
+                _ => Left (ParseError nextTok.span ("Expected ':' for type annotation or 'read' for table binding"))
+    TIdent "main" => do
+      -- main [params] = body
+      let st' = advanceP st  -- skip 'main'
+      (params, st'') <- pMainParams st'
+      ((), st''') <- expect TEquals st''
+      (body, st'''') <- pMainBody st'''
+      Right (STLMain (MkSMain tok.span params body), st'''')
     TIdent "transform" => do
       (t, st') <- pLegacyTransform st
       Right (STLTransform t, st')
-    _ => Left (ParseError tok.span ("Expected 'schema', 'fn', 'let', or 'transform', got " ++ show tok.tok))
+    _ => Left (ParseError tok.span ("Expected 'schema', 'let', 'main', or 'transform', got " ++ show tok.tok))
 
 -----------------------------------------------------------
 -- Program Parser

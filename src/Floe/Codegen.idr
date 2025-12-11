@@ -71,16 +71,17 @@ formatColExpr c = "pl.col(\"" ++ c ++ "\")"
 -- Builtin to Polars method call (must be before map helpers)
 -----------------------------------------------------------
 
--- Resolve a builtin argument using constants
-resolveArg : List (String, String) -> BuiltinArg -> String
+-- Resolve a builtin argument using constants (for string builtins, extract string value)
+resolveArg : List (String, ConstValue) -> BuiltinArg -> String
 resolveArg _ (BArgLit s) = s
 resolveArg consts (BArgRef name) =
   case lookup name consts of
-    Just value => value
+    Just (ConstStr value) => value
+    Just _ => name  -- non-string constant, use variable name
     Nothing => name  -- fallback to name if not found (will error at runtime)
 
 -- Generate Polars method call for a single builtin
-builtinToPolarsWithConsts : List (String, String) -> BuiltinCall -> String
+builtinToPolarsWithConsts : List (String, ConstValue) -> BuiltinCall -> String
 builtinToPolarsWithConsts consts (BStripPrefix arg) =
   ".str.strip_prefix(\"" ++ resolveArg consts arg ++ "\")"
 builtinToPolarsWithConsts consts (BStripSuffix arg) =
@@ -99,7 +100,7 @@ builtinToPolars = builtinToPolarsWithConsts []
 
 -- Generate chained method calls for a function definition
 public export
-fnDefToPolarsWithConsts : List (String, String) -> SFnDef -> String -> String
+fnDefToPolarsWithConsts : List (String, ConstValue) -> SFnDef -> String -> String
 fnDefToPolarsWithConsts consts fndef colExpr =
   colExpr ++ concat (map (builtinToPolarsWithConsts consts) fndef.chain)
 
@@ -139,6 +140,8 @@ filterExprToPolars (FCompareInt col op val _) =
 filterExprToPolars (FCompareIntMaybe col op val _) =
   -- Same codegen as FCompareInt - Polars handles nulls automatically
   "pl.col(\"" ++ col ++ "\") " ++ cmpOpToPolars op ++ " " ++ show val
+filterExprToPolars (FCompareConst col op constName _ _) =
+  "pl.col(\"" ++ col ++ "\") " ++ cmpOpToPolars op ++ " " ++ constName
 filterExprToPolars (FAnd l r) =
   "(" ++ filterExprToPolars l ++ ") & (" ++ filterExprToPolars r ++ ")"
 filterExprToPolars (FOr l r) =
@@ -153,6 +156,10 @@ mapExprToPolars : MapExpr s t -> String
 mapExprToPolars (MCol col _) = "pl.col(\"" ++ col ++ "\")"
 mapExprToPolars (MStrLit s) = "pl.lit(\"" ++ s ++ "\")"
 mapExprToPolars (MIntLit i) = "pl.lit(" ++ show i ++ ")"
+mapExprToPolars (MFloatLit f) = "pl.lit(" ++ show f ++ ")"
+mapExprToPolars (MBoolLit True) = "pl.lit(True)"
+mapExprToPolars (MBoolLit False) = "pl.lit(False)"
+mapExprToPolars (MConstRef name _) = "pl.lit(" ++ name ++ ")"  -- Reference to constant variable
 mapExprToPolars (MIf cond thenE elseE) =
   "pl.when(" ++ filterExprToPolars cond ++ ").then(" ++ mapExprToPolars thenE ++ ").otherwise(" ++ mapExprToPolars elseE ++ ")"
 mapExprToPolars (MIfNullable cond thenE elseE) =
@@ -188,7 +195,7 @@ assignToPolars (ExprAssign new _ expr) =
   mapExprToPolars expr ++ ".alias(\"" ++ new ++ "\")"
 
 -- Generate assignment with full context (constants and function definitions)
-assignToPolarsWithContext : List (String, String) -> List SFnDef -> MapAssign s -> String
+assignToPolarsWithContext : List (String, ConstValue) -> List SFnDef -> MapAssign s -> String
 assignToPolarsWithContext consts fnDefs (ColAssign new old _) =
   "pl.col(\"" ++ old ++ "\").alias(\"" ++ new ++ "\")"
 assignToPolarsWithContext consts fnDefs (HashAssign new cols _) =
@@ -219,7 +226,7 @@ isComputedAssign (BuiltinAppAssign _ _ _ _) = True
 isComputedAssign _ = False
 
 -- Get computed column expressions for with_columns (hash, fn app, builtin app)
-getComputedExprs : List (String, String) -> List SFnDef -> List (MapAssign s) -> List String
+getComputedExprs : List (String, ConstValue) -> List SFnDef -> List (MapAssign s) -> List String
 getComputedExprs consts fnDefs [] = []
 getComputedExprs consts fnDefs (HashAssign new cols _ :: rest) =
   let colExprs = joinWith ", " (map formatColExpr cols)
@@ -250,7 +257,7 @@ formatRename (new, old) = quote old ++ ": " ++ quote new
 
 -- Generate select with all field assignments
 covering
-mapToPolarsWithContext : List (String, String) -> List SFnDef -> List (MapAssign s) -> String -> String
+mapToPolarsWithContext : List (String, ConstValue) -> List SFnDef -> List (MapAssign s) -> String -> String
 mapToPolarsWithContext consts fnDefs assigns df =
   let cols = joinWith ", " (map (assignToPolarsWithContext consts fnDefs) assigns)
   in df ++ ".select(" ++ cols ++ ")"
@@ -265,7 +272,7 @@ mapToPolars = mapToPolarsWithContext [] []
 -----------------------------------------------------------
 
 -- Generate transform expression for a column using function definitions and constants
-transformColWithFnAndConsts : List (String, String) -> List SFnDef -> String -> String -> String
+transformColWithFnAndConsts : List (String, ConstValue) -> List SFnDef -> String -> String -> String
 transformColWithFnAndConsts consts fnDefs fnName col =
   case lookupFnDef fnName fnDefs of
     Just fndef => fnDefToPolarsWithConsts consts fndef ("pl.col(\"" ++ col ++ "\")")
@@ -277,7 +284,7 @@ transformColWithFn = transformColWithFnAndConsts []
 
 public export
 covering
-toPolarsWithConstsAndFns : List (String, String) -> List SFnDef -> Pipeline sIn sOut -> String -> String
+toPolarsWithConstsAndFns : List (String, ConstValue) -> List SFnDef -> Pipeline sIn sOut -> String -> String
 toPolarsWithConstsAndFns consts fnDefs Done df = df
 toPolarsWithConstsAndFns consts fnDefs (Rename old new _ rest) df =
   toPolarsWithConstsAndFns consts fnDefs rest (df ++ ".rename({\"" ++ old ++ "\": \"" ++ new ++ "\"})")

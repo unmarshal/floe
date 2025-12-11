@@ -122,6 +122,8 @@ data SExpr
   | SVar Span String                 -- variable reference
   | SStrLit Span String              -- "string literal"
   | SIntLit Span Integer             -- 123
+  | SFloatLit Span Double            -- 3.14
+  | SBoolLit Span Bool               -- true / false
   | SAnd Span SExpr SExpr            -- expr && expr
   | SOr Span SExpr SExpr             -- expr || expr
   | SEq Span SExpr SExpr             -- expr == expr
@@ -154,6 +156,9 @@ Show SExpr where
   show (SVar _ nm) = nm
   show (SStrLit _ s) = show s
   show (SIntLit _ i) = show i
+  show (SFloatLit _ f) = show f
+  show (SBoolLit _ True) = "True"
+  show (SBoolLit _ False) = "False"
   show (SAnd _ l r) = "(" ++ show l ++ " && " ++ show r ++ ")"
   show (SOr _ l r) = "(" ++ show l ++ " || " ++ show r ++ ")"
   show (SIf _ c t e) = "if " ++ show c ++ " then " ++ show t ++ " else " ++ show e
@@ -174,6 +179,8 @@ exprSpan (SBuiltinApp s _ _) = s
 exprSpan (SVar s _) = s
 exprSpan (SStrLit s _) = s
 exprSpan (SIntLit s _) = s
+exprSpan (SFloatLit s _) = s
+exprSpan (SBoolLit s _) = s
 exprSpan (SAnd s _ _) = s
 exprSpan (SOr s _ _) = s
 exprSpan (SEq s _ _) = s
@@ -287,7 +294,65 @@ Show SPipeline where
 -- Top-level declarations
 -----------------------------------------------------------
 
--- Type signature: let name :: InSchema -> OutSchema
+-- Constant value (typed)
+public export
+data ConstValue
+  = ConstStr String
+  | ConstInt Integer
+  | ConstFloat Double
+  | ConstBool Bool
+
+public export
+Show ConstValue where
+  show (ConstStr s) = show s
+  show (ConstInt i) = show i
+  show (ConstFloat f) = show f
+  show (ConstBool b) = if b then "True" else "False"
+
+-- Get the type of a constant value
+public export
+constValueTy : ConstValue -> Ty
+constValueTy (ConstStr _) = TString
+constValueTy (ConstInt _) = TInt
+constValueTy (ConstFloat _) = TFloat
+constValueTy (ConstBool _) = TBool
+
+-- Binding type annotation
+public export
+data SBindingTy
+  = SBTyConst STy                    -- : Int, : String, etc.
+  | SBTyPipeline String String       -- : InputSchema -> OutputSchema
+  | SBTyColFn STy STy                -- : String -> String (column function)
+
+public export
+Show SBindingTy where
+  show (SBTyConst ty) = show ty
+  show (SBTyPipeline inTy outTy) = inTy ++ " -> " ++ outTy
+  show (SBTyColFn inTy outTy) = show inTy ++ " -> " ++ show outTy
+
+-- Binding value (what comes after the =)
+public export
+data SBindingVal
+  = SBValConst ConstValue            -- literal value: 18, "hello", True
+  | SBValPipeline SPipeline          -- pipeline: rename x y >> drop [z]
+  | SBValColFn (List BuiltinCall)    -- column function: stripPrefix "oa:" >> toLowercase
+
+public export covering
+Show SBindingVal where
+  show (SBValConst v) = show v
+  show (SBValPipeline p) = show p
+  show (SBValColFn chain) = "colFn[" ++ show (length chain) ++ "]"
+
+-- Unified let binding: let name : type = value
+public export
+record SBinding where
+  constructor MkSBinding
+  span : Span
+  name : String
+  ty : SBindingTy
+  val : SBindingVal
+
+-- Legacy type signature (for backwards compat during transition)
 public export
 record STypeSig where
   constructor MkSTypeSig
@@ -296,7 +361,7 @@ record STypeSig where
   inTy : String
   outTy : String
 
--- Let binding: let name = pipeline
+-- Legacy let binding (for backwards compat during transition)
 public export
 record SLetBind where
   constructor MkSLetBind
@@ -304,14 +369,13 @@ record SLetBind where
   name : String
   pipeline : SPipeline
 
--- Function definition: fn name = builtin >> builtin >> ...
--- Composition of Polars column methods
+-- Legacy function definition (for backwards compat during transition)
 public export
 record SFnDef where
   constructor MkSFnDef
   span : Span
   name : String
-  chain : List BuiltinCall  -- sequence of operations
+  chain : List BuiltinCall
 
 -- A step in main: read, pipe through function, or write
 public export
@@ -346,17 +410,18 @@ record STableBind where
   file : String       -- file path or param
   schema : String     -- schema name
 
--- Top-level item
 public export
 data STopLevel
   = STLSchema SSchema
-  | STLTypeSig STypeSig
-  | STLLetBind SLetBind          -- fn name = pipeline
-  | STLFnDef SFnDef              -- fn name = builtin chain (column function)
-  | STLConst Span String String  -- let name = "value" (constant)
+  | STLBinding SBinding          -- let name : type = value (unified binding)
   | STLTableBind STableBind      -- let name = read "file" as Schema
-  | STLMain SMain                -- fn main [params] = body
+  | STLMain SMain                -- main [params] = body
   | STLTransform STransformDef   -- legacy transform block
+  -- Legacy constructors (to be removed after migration)
+  | STLTypeSig STypeSig
+  | STLLetBind SLetBind
+  | STLFnDef SFnDef
+  | STLConst Span String ConstValue
 
 -- A complete Floe program
 public export
@@ -414,15 +479,48 @@ getFnDefs prog = go prog.items
     go (STLFnDef f :: rest) = f :: go rest
     go (_ :: rest) = go rest
 
--- Helper to extract constants
+-- Helper to extract constants (from both legacy and new syntax)
 public export
-getConsts : SProgram -> List (String, String)
+getConsts : SProgram -> List (String, ConstValue)
 getConsts prog = go prog.items
   where
-    go : List STopLevel -> List (String, String)
+    go : List STopLevel -> List (String, ConstValue)
     go [] = []
     go (STLConst _ name value :: rest) = (name, value) :: go rest
+    go (STLBinding b :: rest) = case b.val of
+      SBValConst v => (b.name, v) :: go rest
+      _ => go rest
     go (_ :: rest) = go rest
+
+-- Helper to extract all bindings (new unified format)
+public export
+getBindings : SProgram -> List SBinding
+getBindings prog = go prog.items
+  where
+    go : List STopLevel -> List SBinding
+    go [] = []
+    go (STLBinding b :: rest) = b :: go rest
+    go (_ :: rest) = go rest
+
+-- Helper to extract pipeline bindings from new syntax
+public export
+getPipelineBindings : SProgram -> List SBinding
+getPipelineBindings prog = filter isPipeline (getBindings prog)
+  where
+    isPipeline : SBinding -> Bool
+    isPipeline b = case b.ty of
+      SBTyPipeline _ _ => True
+      _ => False
+
+-- Helper to extract column function bindings from new syntax
+public export
+getColFnBindings : SProgram -> List SBinding
+getColFnBindings prog = filter isColFn (getBindings prog)
+  where
+    isColFn : SBinding -> Bool
+    isColFn b = case b.ty of
+      SBTyColFn _ _ => True
+      _ => False
 
 -- Helper to extract main (there should be at most one)
 public export

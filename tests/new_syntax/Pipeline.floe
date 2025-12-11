@@ -1,0 +1,32 @@
+-- Test new unified let binding syntax
+
+schema Input {
+    name: String,
+    age: Int,
+    score: Float,
+}
+
+schema Output {
+    name: String,
+    age: Int,
+    doubleAge: Int,
+}
+
+-- Constant with explicit type
+let multiplier : Int = 2
+
+-- Pipeline with explicit type annotation
+let transform : Input -> Output =
+    map {
+        name: .name,
+        age: .age,
+        doubleAge: .age * multiplier
+    }
+
+-- Column function with explicit type annotation
+let normalize : String -> String = toLowercase >> trim
+
+main =
+    read "input.parquet" as Input
+    |> transform
+    sink "output.parquet"

@@ -19,49 +19,91 @@ import Data.List
 -- Build GeneratedProgram from parsed/elaborated program
 -----------------------------------------------------------
 
--- Convert SMainStep to EntryStep
-mainStepToEntry : Context -> SMainStep -> Maybe EntryStep
-mainStepToEntry ctx (SRead _ file schemaName) =
+-- Convert SMainStep to EntryStep (with error reporting)
+mainStepToEntry : Context -> SMainStep -> Either FloeError EntryStep
+mainStepToEntry ctx (SRead sp file schemaName) =
   case lookupSchema schemaName ctx of
-    Just schema => Just (ERead file schemaName schema)
-    Nothing => Nothing  -- Schema not found
-mainStepToEntry ctx (SPipeThrough _ fnName) = Just (EPipe fnName)
-mainStepToEntry ctx (SWrite _ file) = Just (EWrite file)
+    Just schema => Right (ERead file schemaName schema)
+    Nothing => Left (ParseError sp ("Schema '" ++ schemaName ++ "' is not defined"))
+mainStepToEntry ctx (SPipeThrough _ fnName) = Right (EPipe fnName)
+mainStepToEntry ctx (SWrite _ file) = Right (EWrite file)
 
--- Build a GeneratedFn from a let binding
-buildGeneratedFn : Context -> List STypeSig -> SLetBind -> Maybe GeneratedFn
+-- Sequence a list of Either into Either of list
+sequenceEither : List (Either e a) -> Either e (List a)
+sequenceEither [] = Right []
+sequenceEither (Left e :: _) = Left e
+sequenceEither (Right x :: rest) = map (x ::) (sequenceEither rest)
+
+-- Build a GeneratedFn from a legacy let binding
+buildGeneratedFn : Context -> List STypeSig -> SLetBind -> Either FloeError GeneratedFn
 buildGeneratedFn ctx typeSigs b =
   case elabLetBind ctx typeSigs b of
-    Left _ => Nothing
+    Left e => Left e
     Right (sIn ** sOut ** pipeline) =>
       let (inName, outName) = case findSig b.name typeSigs of
             Nothing => ("Unknown", "Unknown")
             Just sig => (sig.inTy, sig.outTy)
-      in Just $ MkGeneratedFn b.name sIn inName outName (sIn ** sOut ** pipeline)
+      in Right $ MkGeneratedFn b.name sIn inName outName (sIn ** sOut ** pipeline)
   where
     findSig : String -> List STypeSig -> Maybe STypeSig
     findSig _ [] = Nothing
     findSig nm (s :: rest) = if s.name == nm then Just s else findSig nm rest
 
--- Build table bindings
-buildTableBinding : Context -> STableBind -> Maybe TableBinding
+-- Build a GeneratedFn from a new-style binding (let name : In -> Out = pipeline)
+buildGeneratedFnFromBinding : Context -> SBinding -> Either FloeError (Maybe GeneratedFn)
+buildGeneratedFnFromBinding ctx b =
+  case (b.ty, b.val) of
+    (SBTyPipeline inName outName, SBValPipeline pipeline) => do
+      -- Look up input schema
+      sIn <- case lookupSchema inName ctx of
+        Nothing => Left (SchemaNotFound b.span inName)
+        Just s => Right s
+      -- Elaborate the pipeline
+      case pipeline of
+        SPipeRef _ refName => Left (ParseError b.span "Pipeline references not yet supported")
+        SPipe _ ops _ => do
+          (sOut ** p) <- elabOps ctx sIn ops
+          Right (Just (MkGeneratedFn b.name sIn inName outName (sIn ** sOut ** p)))
+    _ => Right Nothing  -- Not a pipeline binding
+
+-- Build table bindings (with error reporting)
+buildTableBinding : Context -> STableBind -> Either FloeError TableBinding
 buildTableBinding ctx tb =
   case lookupSchema tb.schema ctx of
-    Just schema => Just $ MkTableBinding tb.name tb.file schema
-    Nothing => Nothing
+    Just schema => Right $ MkTableBinding tb.name tb.file schema
+    Nothing => Left (ParseError tb.span ("Schema '" ++ tb.schema ++ "' is not defined"))
+
+-- Extract column function definitions from new-style bindings
+-- Converts SBinding with SBTyColFn to SFnDef for codegen
+extractColFnDefs : List SBinding -> List SFnDef
+extractColFnDefs [] = []
+extractColFnDefs (b :: rest) =
+  case (b.ty, b.val) of
+    (SBTyColFn _ _, SBValColFn chain) => MkSFnDef b.span b.name chain :: extractColFnDefs rest
+    _ => extractColFnDefs rest
 
 -- Build the complete GeneratedProgram
-buildProgram : CompileOptions -> Context -> SProgram -> GeneratedProgram
-buildProgram opts ctx prog =
+buildProgram : CompileOptions -> Context -> SProgram -> Either FloeError GeneratedProgram
+buildProgram opts ctx prog = do
   let consts = getConsts prog
-      fnDefs = getFnDefs prog
-      typeSigs = getTypeSigs prog
-      tables = mapMaybe (buildTableBinding ctx) (getTableBinds prog)
-      functions = mapMaybe (buildGeneratedFn ctx typeSigs) (getLetBinds prog)
-      (params, steps) = case getMain prog of
-        Nothing => ([], [])
-        Just m => (m.params, mapMaybe (mainStepToEntry ctx) m.body)
-  in MkGeneratedProgram opts consts fnDefs tables functions params steps
+  -- Combine legacy and new-style column function definitions
+  let legacyFnDefs = getFnDefs prog
+  let newFnDefs = extractColFnDefs (getBindings prog)
+  let fnDefs = legacyFnDefs ++ newFnDefs
+  let typeSigs = getTypeSigs prog
+  tables <- sequenceEither (map (buildTableBinding ctx) (getTableBinds prog))
+  -- Build functions from legacy let bindings
+  legacyFunctions <- sequenceEither (map (buildGeneratedFn ctx typeSigs) (getLetBinds prog))
+  -- Build functions from new-style bindings
+  newFunctionsMaybe <- sequenceEither (map (buildGeneratedFnFromBinding ctx) (getBindings prog))
+  let newFunctions = catMaybes newFunctionsMaybe
+  let functions = legacyFunctions ++ newFunctions
+  (params, steps) <- case getMain prog of
+    Nothing => Right ([], [])
+    Just m => do
+      steps <- sequenceEither (map (mainStepToEntry ctx) m.body)
+      Right (m.params, steps)
+  Right $ MkGeneratedProgram opts consts fnDefs tables functions params steps
 
 -----------------------------------------------------------
 -- Compile a .floe file
@@ -83,8 +125,12 @@ compileFile opts filename = do
           putStrLn $ show e
           exitWith (ExitFailure 1)
         Right ctx => do
-          let genProg = buildProgram opts ctx prog
-          putStrLn $ renderPolarsPython genProg
+          case buildProgram opts ctx prog of
+            Left e => do
+              putStrLn $ show e
+              exitWith (ExitFailure 1)
+            Right genProg =>
+              putStrLn $ renderPolarsPython genProg
 
 -----------------------------------------------------------
 -- Main

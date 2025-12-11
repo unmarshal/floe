@@ -10,14 +10,13 @@ schema Output {
     amount: Decimal(10, 2),
 }
 
-fn passthrough :: Expected -> Output
-fn passthrough =
+let passthrough : Expected -> Output =
     map {
         id: .id,
         amount: .amount
     }
 
-fn main =
+main =
     read "input.parquet" as Expected
     |> passthrough
     sink "output.parquet"

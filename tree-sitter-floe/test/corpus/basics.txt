@@ -1,0 +1,123 @@
+================================================================================
+Schema definition
+================================================================================
+
+schema User {
+    id: String,
+    name: String,
+    age: Int,
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (schema_definition
+    (type_identifier)
+    (field_list
+      (field_definition (identifier) (type (simple_type)))
+      (field_definition (identifier) (type (simple_type)))
+      (field_definition (identifier) (type (simple_type))))))
+
+================================================================================
+Pipeline binding
+================================================================================
+
+let transform : Input -> Output =
+    rename old_name new_name >>
+    drop [col1, col2]
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (binding
+    (identifier)
+    (binding_type
+      (pipeline_type (type_identifier) (type_identifier)))
+    (binding_value
+      (pipeline
+        (operation (rename_op (identifier) (identifier)))
+        (operation (drop_op (column_list (identifier) (identifier))))))))
+
+================================================================================
+Constant binding
+================================================================================
+
+let minAge : Int = 18
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (binding
+    (identifier)
+    (binding_type (const_type (simple_type)))
+    (binding_value (literal (number)))))
+
+================================================================================
+Filter with comparison
+================================================================================
+
+let filterActive : Input -> Output =
+    filter .age > 18
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (binding
+    (identifier)
+    (binding_type
+      (pipeline_type (type_identifier) (type_identifier)))
+    (binding_value
+      (pipeline
+        (operation
+          (filter_op
+            (filter_expr
+              (comparison_expr
+                (column_ref (identifier))
+                (comparison_op)
+                (literal (number))))))))))
+
+================================================================================
+Map with if-then-else
+================================================================================
+
+let categorize : Input -> Output =
+    map {
+        status: if .value > 100 then "high" else "low"
+    }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (binding
+    (identifier)
+    (binding_type
+      (pipeline_type (type_identifier) (type_identifier)))
+    (binding_value
+      (pipeline
+        (operation
+          (map_op
+            (map_field_list
+              (map_field
+                (identifier)
+                (map_expr
+                  (if_expr
+                    (filter_expr
+                      (comparison_expr
+                        (column_ref (identifier))
+                        (comparison_op)
+                        (literal (number))))
+                    (map_expr (literal (string)))
+                    (map_expr (literal (string)))))))))))))
+
+================================================================================
+Comment
+================================================================================
+
+-- This is a comment
+schema Empty {}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (comment)
+  (schema_definition (type_identifier)))

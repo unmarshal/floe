@@ -15,12 +15,11 @@ schema EnrichedOrder {
 
 let users = read "users.parquet" as User
 
-fn enrich :: Order -> EnrichedOrder
-fn enrich =
+let enrich : Order -> EnrichedOrder =
     join users on .user_id == .id
     >> map { order_id: .order_id, name: .name }
 
-fn main =
+main =
     read "orders.parquet" as Order
     |> enrich
     sink "output.parquet"

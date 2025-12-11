@@ -10,7 +10,6 @@ schema Output {
     age: Int,
 }
 
-fn transform :: Input -> Output
-fn transform = select [name, age]
+let transform : Input -> Output = select [name, age]
 
-fn main = read "input.parquet" as Input |> transform sink "output.parquet"
+main = read "input.parquet" as Input |> transform sink "output.parquet"

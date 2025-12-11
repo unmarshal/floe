@@ -22,7 +22,6 @@ schema EnrichedOrder {
 let customers = read "customers.parquet" as Customer
 
 -- Enrich orders with customer names
-fn enrichOrders :: Order -> EnrichedOrder
-fn enrichOrders =
+let enrichOrders : Order -> EnrichedOrder =
     join customers on .customer_id == .id
     >> map { order_id: .order_id, customer_name: .name, amount: .amount }
