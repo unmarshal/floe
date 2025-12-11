@@ -63,6 +63,41 @@ idris2 --build floe.ipkg
 make test
 ```
 
+## Operations
+
+```floe
+-- Rename a column
+rename old_name new_name
+
+-- Drop columns
+drop [col1, col2]
+
+-- Keep only these columns
+select [col1, col2]
+
+-- Filter rows where boolean column is true
+filter .is_active
+
+-- Filter nulls and refine Maybe T -> T
+require [nullable_col]
+
+-- Deduplicate by column
+uniqueBy .id
+
+-- Project and transform columns
+map { 
+    new_name: .old_name,
+    full_name: hash [.first, .last],
+    upper_email: toUppercase .email
+}
+
+-- Join tables
+join other_table on .my_col == .their_col
+
+-- Apply scalar function to columns
+transform [col1, col2] myFunction
+```
+
 ## Builtins
 
 String functions available for use in `transform` and scalar function definitions.
