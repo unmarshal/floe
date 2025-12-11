@@ -445,10 +445,46 @@ areArithCompatible _ _ = False
 decimalResultTy : Nat -> Nat -> Nat -> Nat -> Ty
 decimalResultTy p1 s1 p2 s2 = TDecimal (max p1 p2) (max s1 s2)
 
+-- Check if a surface expression is an integer literal
+isIntLit : SExpr -> Bool
+isIntLit (SIntLit _ _) = True
+isIntLit _ = False
+
+-- Get integer value from literal
+getIntLit : SExpr -> Maybe Integer
+getIntLit (SIntLit _ i) = Just i
+getIntLit _ = Nothing
+
+-- Create a MapExpr for a literal coerced to a given numeric type
+-- For Decimal, we use believe_me since the actual value is the same
+coerceLiteral : (s : Schema) -> Integer -> (t : Ty) -> MapExpr s t
+coerceLiteral s i TInt64 = MIntLit i
+coerceLiteral s i TFloat = believe_me (MIntLit {s} i)  -- Polars handles int -> float
+coerceLiteral s i (TDecimal _ _) = believe_me (MIntLit {s} i)  -- Polars handles int -> decimal
+coerceLiteral s i _ = believe_me (MIntLit {s} i)  -- Fallback
+
 elabArithOp span s op left right = do
-  MkMapExprResult leftTy leftExpr <- elabMapExpr span s left
-  MkMapExprResult rightTy rightExpr <- elabMapExpr span s right
-  buildArith span op leftTy leftExpr rightTy rightExpr
+  -- Check for literal coercion cases first
+  case (getIntLit left, getIntLit right) of
+    -- Left is literal, right is not - coerce left to right's type
+    (Just leftVal, Nothing) => do
+      MkMapExprResult rightTy rightExpr <- elabMapExpr span s right
+      if isNumericTy rightTy
+        then let leftExpr = coerceLiteral s leftVal rightTy
+             in ok (MkMapExprResult rightTy (applyArithOp op leftExpr rightExpr))
+        else err (ParseError span ("Arithmetic requires numeric types, got: " ++ show rightTy))
+    -- Right is literal, left is not - coerce right to left's type
+    (Nothing, Just rightVal) => do
+      MkMapExprResult leftTy leftExpr <- elabMapExpr span s left
+      if isNumericTy leftTy
+        then let rightExpr = coerceLiteral s rightVal leftTy
+             in ok (MkMapExprResult leftTy (applyArithOp op leftExpr rightExpr))
+        else err (ParseError span ("Arithmetic requires numeric types, got: " ++ show leftTy))
+    -- Both literals or neither - use standard elaboration
+    _ => do
+      MkMapExprResult leftTy leftExpr <- elabMapExpr span s left
+      MkMapExprResult rightTy rightExpr <- elabMapExpr span s right
+      buildArith span op leftTy leftExpr rightTy rightExpr
   where
     buildArith : Span -> ArithOp -> (t1 : Ty) -> MapExpr s t1 -> (t2 : Ty) -> MapExpr s t2 -> Result (MapExprResult s)
     buildArith span op t1 e1 t2 e2 =

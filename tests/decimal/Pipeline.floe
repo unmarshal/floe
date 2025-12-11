@@ -12,6 +12,7 @@ schema InvoiceWithTax {
     tax_rate: Decimal(5, 4),
     tax_amount: Decimal(10, 2),
     total: Decimal(10, 2),
+    doubled: Decimal(10, 2),
 }
 
 fn calculateTax :: Invoice -> InvoiceWithTax
@@ -21,7 +22,8 @@ fn calculateTax =
         amount: .amount,
         tax_rate: .tax_rate,
         tax_amount: .amount * .tax_rate,
-        total: .amount + .amount * .tax_rate
+        total: .amount + .amount * .tax_rate,
+        doubled: .amount * 2
     }
 
 fn main =

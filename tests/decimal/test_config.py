@@ -25,6 +25,7 @@ inputs = {
 
 # tax_amount = amount * tax_rate
 # total = amount + tax_amount
+# doubled = amount * 2
 expected_output = {
     "id": ["INV001", "INV002", "INV003"],
     # Expected values (calculated manually)
@@ -36,6 +37,10 @@ expected_output = {
     # 49.99 + 3.74925 = 53.73925
     # 250.50 + 22.545 = 273.045
     "total": [108.25, 53.73925, 273.045],
+    # 100.00 * 2 = 200.00
+    # 49.99 * 2 = 99.98
+    # 250.50 * 2 = 501.00
+    "doubled": [200.00, 99.98, 501.00],
 }
 
 
@@ -47,7 +52,7 @@ def compare_output(actual, expected):
     )
 
     # Check numeric columns with tolerance (Decimal arithmetic)
-    for col in ["tax_amount", "total"]:
+    for col in ["tax_amount", "total", "doubled"]:
         actual_vals = actual[col].cast(pl.Float64).to_list()
         expected_vals = expected[col]
         for i, (a, e) in enumerate(zip(actual_vals, expected_vals)):
