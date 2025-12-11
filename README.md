@@ -69,8 +69,6 @@ String functions available for use in `transform` and scalar function definition
 
 Builtins can be chained: `trim >> toLowercase >> stripPrefix "https://"`
 
-### Implemented
-
 | Floe | Polars | Description |
 |------|--------|-------------|
 | `toLowercase` | `.str.to_lowercase()` | Convert to lowercase |
@@ -81,31 +79,6 @@ Builtins can be chained: `trim >> toLowercase >> stripPrefix "https://"`
 | `stripPrefix p` | `.str.strip_prefix(p)` | Remove prefix if present |
 | `stripSuffix s` | `.str.strip_suffix(s)` | Remove suffix if present |
 | `cast Type` | `.cast(Type)` | Type conversion |
-
-### Pending
-
-| Polars | Description |
-|--------|-------------|
-| `.str.head(n)` | First n characters |
-| `.str.tail(n)` | Last n characters |
-| `.str.slice(offset, len)` | Substring extraction |
-| `.str.contains(pat)` | Check if contains pattern |
-| `.str.starts_with(pat)` | Check if starts with |
-| `.str.ends_with(pat)` | Check if ends with |
-| `.str.pad_start(len, char)` | Left pad |
-| `.str.pad_end(len, char)` | Right pad |
-| `.str.to_titlecase()` | Title Case |
-| `.str.reverse()` | Reverse string |
-| `.str.zfill(n)` | Zero-pad numbers |
-| `.str.split(sep)` | Split into list |
-| `.str.concat(...)` | Concatenate strings |
-| `.str.find(pat)` | Find index of pattern |
-| `.str.count_matches(pat)` | Count occurrences |
-| `.str.extract(regex)` | Regex capture |
-| `.str.replace_all(pat, val)` | Replace all occurrences |
-| `.str.json_decode()` | JSON parsing |
-| `.str.to_date()` | Date parsing |
-| `.str.to_datetime()` | Datetime parsing |
 
 ## Not a General-Purpose Language
 
