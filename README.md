@@ -10,7 +10,7 @@ Data pipelines fail at runtime with schema mismatches, missing columns, and type
 
 Floe uses dependent types (in Idris 2) to make invalid pipelines unrepresentable. If your pipeline compiles, every column reference is valid, every type matches, and the output schema is exactly what you declared.
 
-```idris
+```haskell
 schema RawUser {
     user_id: String,
     full_name: String,
@@ -29,7 +29,7 @@ let cleanUser : RawUser -> User =
     rename full_name name >>
     rename email_address email >>
     drop [is_active]
-```idris
+```
 
 The compiler proves:
 - `user_id` exists in `RawUser` (and is a String)
@@ -38,15 +38,15 @@ The compiler proves:
 
 If you make a mistake, the compiler catches it:
 
-```idris
+```haskell
 let cleanUser : RawUser -> User =
     rename user_id id >>
     drop [user_id]  -- ERROR: user_id no longer exists!
-```idris
+```
 
-```idris
+```haskell
 line 3, col 5: One or more columns not found for drop
-```idris
+```
 
 ## Quick Start
 
@@ -59,7 +59,7 @@ idris2 --build floe.ipkg
 
 # Run tests
 make test
-```idris
+```
 
 ## Types
 
@@ -79,7 +79,7 @@ Floe supports the following column types:
 
 Use `Decimal` for financial data to avoid floating-point precision issues:
 
-```idris
+```haskell
 schema Invoice {
     amount: Decimal(10, 2),      -- 10 digits total, 2 after decimal
     tax_rate: Decimal(5, 4),     -- 5 digits total, 4 after decimal
@@ -91,7 +91,7 @@ let calculateTotal : Invoice -> InvoiceWithTotal =
         tax: .amount * .tax_rate,
         total: .amount + .amount * .tax_rate
     }
-```idris
+```
 
 Decimals with different precision/scale can be mixed in arithmetic - Polars handles the conversion automatically.
 
@@ -107,7 +107,7 @@ _expected_schema = {"amount": pl.Decimal(precision=10, scale=2), ...}
 for _col, _dtype in _expected_schema.items():
     if df.schema[_col] != _dtype:
         raise TypeError(f"Column '{_col}': expected {_dtype}, got {df.schema[_col]}")
-```idris
+```
 
 This provides **two layers of type safety**:
 - **Compile time**: Proves pipeline transformations are internally consistent
@@ -115,9 +115,28 @@ This provides **two layers of type safety**:
 
 If a parquet file has `Decimal(38, 2)` but you declared `Decimal(10, 2)`, you get a clear error immediately rather than silent data corruption.
 
+## Bindings
+
+All bindings require explicit type annotations using the syntax `let name : Type = value`:
+
+```haskell
+-- Pipeline: transforms one schema to another
+let cleanUser : RawUser -> User =
+    rename user_id id >>
+    drop [is_active]
+
+-- Constant: typed value usable in expressions
+let minAge : Int = 18
+
+-- Column function: scalar transformer using builtins
+let normalize : String -> String = trim >> toLowercase
+```
+
+The type annotation is mandatory - Floe does not infer types for top-level bindings.
+
 ## Operations
 
-```idris
+```haskell
 -- Rename a column
 rename old_name new_name
 
@@ -158,7 +177,7 @@ join other_table on .my_col == .their_col
 
 -- Apply scalar function to columns
 transform [col1, col2] myFunction
-```idris
+```
 
 ## Builtins
 
@@ -188,9 +207,9 @@ Why? Because columnar operations (rename, drop, filter, join, map) can be:
 
 If you need custom logic, define a scalar function with builtins:
 
-```idris
+```haskell
 let normalizeUrl : String -> String = trim >> toLowercase >> stripPrefix "https://"
-```idris
+```
 
 For anything more complex, write it in Python and call it from your pipeline.
 

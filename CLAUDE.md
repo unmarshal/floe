@@ -20,11 +20,11 @@ cd tests && uv run run_tests.py
 
 # Clean build artifacts and test outputs
 make clean
-```idris
+```haskell
 
 ## Project Structure
 
-```idris
+```
 floe/
 ├── floe.ipkg              # Main compiler package
 ├── floe-test.ipkg         # Test package
@@ -39,40 +39,35 @@ floe/
 │   │   ├── Elaborate.idr  # Surface -> Core elaboration
 │   │   ├── Codegen.idr    # Core -> Python/Polars
 │   │   ├── Error.idr      # Error types with source spans
-│   │   ├── Types.idr      # Shared type definitions
-│   │   └── Syntax.md      # DSL syntax reference
+│   │   └── Types.idr      # Shared type definitions
 │   └── Test/
-│       ├── Main.idr       # Test runner entry point
 │       ├── Parser.idr     # Parser tests
 │       ├── Elaborate.idr  # Elaboration tests
 │       ├── Codegen.idr    # Code generation tests
-│       ├── Assert.idr     # Test assertions
 │       └── Runner.idr     # Test framework
+├── editors/               # Editor tooling (tree-sitter, Zed extension)
 ├── examples/
 │   ├── Basic.floe         # Basic operations (rename, drop, filter)
+│   ├── Builtins.floe      # String builtin examples
 │   └── JoinExample.floe   # Join operations example
 └── tests/
-    ├── run_tests.py            # Python integration test runner
-    ├── filter_comparisons/     # Filter with int comparison test
-    ├── filter_string_columns/  # Filter comparing string columns test
-    ├── if_else/                # If-then-else expressions test
-    ├── if_else_nullable/       # If-then-else with nullable columns test
-    └── join_enriches_orders/   # Join integration test
-```idris
+    ├── run_tests.py       # Python integration test runner
+    └── */Pipeline.floe    # Integration test cases
+```haskell
 
 ## Architecture
 
-```idris
+```haskell
 .floe source → Parser → Surface AST → Elaboration → Typed IR → Python Codegen
                                            ↓
                                      (errors with source locations)
-```idris
+```haskell
 
 The Typed IR uses dependent types to encode schema correctness. When elaboration succeeds, Idris has *proven* the pipeline is valid.
 
 ## DSL Syntax
 
-```idris
+```haskell
 -- Schema definitions
 schema RawUser {
     user_id: String,
@@ -125,7 +120,7 @@ let labelProducts : Product -> LabeledProduct =
         price_tier: if .price > minPrice then "premium" else "budget",
         availability: if .in_stock then "available" else "out of stock"
     }
-```idris
+```haskell
 
 ### Binding Types
 
@@ -182,47 +177,47 @@ The Typed IR carries proofs that operations are valid. These proofs are erased a
 
 ### `HasCol` - Proof a field exists with a specific type
 
-```idris
+```haskell
 data HasCol : Schema -> String -> Ty -> Type where
   Here  : HasCol (MkField nm t :: rest) nm t
   There : HasCol rest nm t -> HasCol (f :: rest) nm t
-```idris
+```haskell
 
 A value of type `HasCol s "user_id" TStr` is *evidence* that schema `s` contains a string field "user_id".
 
 ### `AllHasCol` - Proof all fields in a list exist
 
-```idris
+```haskell
 data AllHasCol : Schema -> List String -> Type where
   AllNil  : AllHasCol s []
   AllCons : {0 t : Ty} -> HasCol s nm t -> AllHasCol s nms -> AllHasCol s (nm :: nms)
-```idris
+```haskell
 
 Used by `Drop`, `Select`, `UniqueBy` to prove all referenced columns exist.
 
 ### `AllHasColTy` - Proof all fields have the same type
 
-```idris
+```haskell
 data AllHasColTy : Schema -> List String -> Ty -> Type where
   AllTyNil  : AllHasColTy s [] t
   AllTyCons : HasCol s nm t -> AllHasColTy s nms t -> AllHasColTy s (nm :: nms) t
-```idris
+```haskell
 
 Used by `Transform` to prove all columns being transformed have the expected type (e.g., all are `String` for a string function).
 
 ### `AllHasMaybeCol` - Proof all fields are nullable
 
-```idris
+```haskell
 data AllHasMaybeCol : Schema -> List String -> Type where
   AllMaybeNil  : AllHasMaybeCol s []
   AllMaybeCons : {0 t : Ty} -> HasCol s nm (TMaybe t) -> AllHasMaybeCol s nms -> AllHasMaybeCol s (nm :: nms)
-```idris
+```haskell
 
 Used by `Require` to prove all columns being required are actually `Maybe T` (so they can be refined to `T`).
 
 ### `FilterExpr` - Schema-indexed filter expressions
 
-```idris
+```haskell
 data CmpOp = CmpEq | CmpNeq | CmpLt | CmpGt | CmpLte | CmpGte
 
 data FilterExpr : Schema -> Type where
@@ -246,13 +241,13 @@ data FilterExpr : Schema -> Type where
   -- Logical combinators
   FAnd : FilterExpr s -> FilterExpr s -> FilterExpr s
   FOr : FilterExpr s -> FilterExpr s -> FilterExpr s
-```idris
+```haskell
 
 Used by `Filter`. Key insight: `FCompareCols` shares type variable `t` between both proofs, so Idris enforces that both columns have the same type at compile time.
 
 ### `MapExpr` - Schema-indexed typed value expressions
 
-```idris
+```haskell
 data MapExpr : Schema -> Ty -> Type where
   -- Column reference with existence proof
   MCol : (col : String) -> (0 prf : HasCol s col t) -> MapExpr s t
@@ -274,7 +269,7 @@ data MapExpr : Schema -> Ty -> Type where
   MIf : (cond : FilterExpr s) -> (thenE : MapExpr s t) -> (elseE : MapExpr s t) -> MapExpr s t
   -- If-then-else with nullable condition (result type Maybe t)
   MIfNullable : (cond : FilterExpr s) -> (thenE : MapExpr s t) -> (elseE : MapExpr s t) -> MapExpr s (TMaybe t)
-```idris
+```haskell
 
 Used by `map { field: expr }`. Key insights:
 - Both `MIf` and `MIfNullable` share type variable `t` for both branches, ensuring type consistency
@@ -297,13 +292,13 @@ This is implemented in codegen:
 
 ### Elaboration
 
-```idris
+```haskell
 elabExpr : (s : Schema) -> SExpr -> CompilerM (t : Ty ** Expr s t)
 elabExpr s (SCol sp nm) =
   case hasField s nm of
     Yes (t ** pf) => Right (t ** Col nm pf)
     No _ => fail sp "Unknown column '\{nm}'"
-```idris
+```haskell
 
 If `hasField` returns a proof, we construct the typed expression. Otherwise, we produce an error with source location.
 
