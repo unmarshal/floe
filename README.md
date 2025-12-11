@@ -75,10 +75,10 @@ Builtins can be chained: `trim >> toLowercase >> stripPrefix "https://"`
 | `toUppercase` | Convert to uppercase |
 | `trim` | Remove leading/trailing whitespace |
 | `lenChars` | String length in characters |
-| `replace old new` | Replace substring |
-| `stripPrefix p` | Remove prefix if present |
-| `stripSuffix s` | Remove suffix if present |
-| `cast Type` | Type conversion |
+| `replace` | Replace substring |
+| `stripPrefix` | Remove prefix if present |
+| `stripSuffix` | Remove suffix if present |
+| `cast` | Type conversion |
 
 ## Not a General-Purpose Language
 
