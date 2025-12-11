@@ -120,6 +120,11 @@ mapExprToPolars (MIfNullable cond thenE elseE) =
   -- Nullable condition: use chained when/then to preserve nulls
   -- when(cond).then(thenE).when(~cond).then(elseE) -> null when cond is null
   "pl.when(" ++ filterExprToPolars cond ++ ").then(" ++ mapExprToPolars thenE ++ ").when(~(" ++ filterExprToPolars cond ++ ")).then(" ++ mapExprToPolars elseE ++ ")"
+-- Arithmetic operations
+mapExprToPolars (MAdd l r) = "(" ++ mapExprToPolars l ++ " + " ++ mapExprToPolars r ++ ")"
+mapExprToPolars (MSub l r) = "(" ++ mapExprToPolars l ++ " - " ++ mapExprToPolars r ++ ")"
+mapExprToPolars (MMul l r) = "(" ++ mapExprToPolars l ++ " * " ++ mapExprToPolars r ++ ")"
+mapExprToPolars (MDiv l r) = "(" ++ mapExprToPolars l ++ " / " ++ mapExprToPolars r ++ ")"
 
 -----------------------------------------------------------
 -- Map Codegen Helpers

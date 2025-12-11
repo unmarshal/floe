@@ -1,0 +1,29 @@
+-- Test arithmetic expressions
+
+schema Product {
+    name: String,
+    price: Int64,
+    quantity: Int64,
+    discount: Int64,
+}
+
+schema OrderSummary {
+    name: String,
+    total: Int64,
+    discounted_price: Int64,
+    profit_margin: Int64,
+}
+
+fn calculateTotals :: Product -> OrderSummary
+fn calculateTotals =
+    map {
+        name: .name,
+        total: .price * .quantity,
+        discounted_price: .price - .discount,
+        profit_margin: .price / 10 + 5
+    }
+
+fn main =
+    read "input.parquet" as Product
+    |> calculateTotals
+    sink "output.parquet"

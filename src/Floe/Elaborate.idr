@@ -159,6 +159,10 @@ processMapFields (SFieldAssign _ newName expr :: rest) =
        SIf _ _ _ _ => PFExpr newName expr :: assigns  -- If-then-else expression
        SStrLit _ _ => PFExpr newName expr :: assigns  -- String literal
        SIntLit _ _ => PFExpr newName expr :: assigns  -- Integer literal
+       SAdd _ _ _ => PFExpr newName expr :: assigns   -- Arithmetic: addition
+       SSub _ _ _ => PFExpr newName expr :: assigns   -- Arithmetic: subtraction
+       SMul _ _ _ => PFExpr newName expr :: assigns   -- Arithmetic: multiplication
+       SDiv _ _ _ => PFExpr newName expr :: assigns   -- Arithmetic: division
        _ => assigns  -- Skip unsupported expressions for now
 
 -- Extract column assignments (for schema computation)
@@ -256,6 +260,11 @@ inferExprTy s (SIf _ cond thenE elseE) =
     collectExprCols (SAnd _ l r) = collectExprCols l ++ collectExprCols r
     collectExprCols (SOr _ l r) = collectExprCols l ++ collectExprCols r
     collectExprCols _ = []
+-- Arithmetic: infer type from left operand (both should be same type)
+inferExprTy s (SAdd _ l r) = inferExprTy s l
+inferExprTy s (SSub _ l r) = inferExprTy s l
+inferExprTy s (SMul _ l r) = inferExprTy s l
+inferExprTy s (SDiv _ l r) = inferExprTy s l
 inferExprTy s _ = TString  -- Default fallback
 
 -- Convert a single processed field to a column in the output schema
@@ -282,6 +291,12 @@ data MapExprResult : Schema -> Type where
   MkMapExprResult : (t : Ty) -> MapExpr s t -> MapExprResult s
 
 elabMapExpr : Span -> (s : Schema) -> SExpr -> Result (MapExprResult s)
+
+-- Arithmetic operator enum
+data ArithOp = AOAdd | AOSub | AOMul | AODiv
+
+-- Forward declaration for arithmetic helper
+elabArithOp : Span -> (s : Schema) -> ArithOp -> SExpr -> SExpr -> Result (MapExprResult s)
 
 -- Convert a single ProcessedField to a MapAssign with proof
 -- Returns Nothing if the column doesn't exist
@@ -404,6 +419,33 @@ filterExprIsNullable s expr = anyNullable s (filterExprCols expr)
 -- Elaborate Map Expressions (implementation)
 -----------------------------------------------------------
 
+-- Helper for arithmetic elaboration
+isNumericTy : Ty -> Bool
+isNumericTy TInt64 = True
+isNumericTy TFloat = True
+isNumericTy _ = False
+
+-- Apply arithmetic operator to two expressions of the same type
+applyArithOp : ArithOp -> MapExpr s t -> MapExpr s t -> MapExpr s t
+applyArithOp AOAdd l r = MAdd l r
+applyArithOp AOSub l r = MSub l r
+applyArithOp AOMul l r = MMul l r
+applyArithOp AODiv l r = MDiv l r
+
+elabArithOp span s op left right = do
+  MkMapExprResult leftTy leftExpr <- elabMapExpr span s left
+  MkMapExprResult rightTy rightExpr <- elabMapExpr span s right
+  buildArith span op leftTy leftExpr rightTy rightExpr
+  where
+    buildArith : Span -> ArithOp -> (t1 : Ty) -> MapExpr s t1 -> (t2 : Ty) -> MapExpr s t2 -> Result (MapExprResult s)
+    buildArith span op t1 e1 t2 e2 =
+      case decEq t1 t2 of
+        No _ => err (ParseError span ("Arithmetic operands have different types: " ++ show t1 ++ " vs " ++ show t2))
+        Yes Refl =>
+          if isNumericTy t1
+            then ok (MkMapExprResult t1 (applyArithOp op e1 e2))
+            else err (ParseError span ("Arithmetic requires numeric types, got: " ++ show t1))
+
 -- Column reference
 elabMapExpr span s (SColRef _ col) =
   case findCol s col of
@@ -438,6 +480,11 @@ elabMapExpr span s (SIf _ cond thenE elseE) = do
           if filterExprIsNullable s cond
             then ok (MkMapExprResult (TMaybe t1) (MIfNullable cond e1 e2))
             else ok (MkMapExprResult t1 (MIf cond e1 e2))
+-- Arithmetic operations
+elabMapExpr span s (SAdd _ left right) = elabArithOp span s AOAdd left right
+elabMapExpr span s (SSub _ left right) = elabArithOp span s AOSub left right
+elabMapExpr span s (SMul _ left right) = elabArithOp span s AOMul left right
+elabMapExpr span s (SDiv _ left right) = elabArithOp span s AODiv left right
 -- Other expressions not yet supported in map
 elabMapExpr span s expr = err (ParseError span ("Unsupported expression in map: " ++ show expr))
 

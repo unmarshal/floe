@@ -53,6 +53,10 @@ data Token
   | TQuestion      -- ?
   | TAnd           -- &&
   | TOr            -- ||
+  | TPlus          -- +
+  | TMinus         -- -
+  | TStar          -- *
+  | TSlash         -- /
   | TIdent String
   | TStrLit String
   | TIntLit Integer
@@ -97,6 +101,10 @@ Show Token where
   show TQuestion = "?"
   show TAnd = "&&"
   show TOr = "||"
+  show TPlus = "+"
+  show TMinus = "-"
+  show TStar = "*"
+  show TSlash = "/"
   show (TIdent s) = "identifier '" ++ s ++ "'"
   show (TStrLit s) = "string \"" ++ s ++ "\""
   show (TIntLit i) = "integer " ++ show i
@@ -141,6 +149,10 @@ Eq Token where
   TQuestion == TQuestion = True
   TAnd == TAnd = True
   TOr == TOr = True
+  TPlus == TPlus = True
+  TMinus == TMinus = True
+  TStar == TStar = True
+  TSlash == TSlash = True
   TIdent x == TIdent y = x == y
   TStrLit x == TStrLit y = x == y
   TIntLit x == TIntLit y = x == y
@@ -277,6 +289,7 @@ lexOne st =
     ('.' :: _) => Right (MkTok sp TDot, advance st)
     ('?' :: _) => Right (MkTok sp TQuestion, advance st)
     ('-' :: '>' :: _) => Right (MkTok sp TArrow, advanceN 2 st)
+    ('-' :: _) => Right (MkTok sp TMinus, advance st)
     ('=' :: '>' :: _) => Right (MkTok sp TFatArrow, advanceN 2 st)
     ('=' :: '=' :: _) => Right (MkTok sp TDoubleEq, advanceN 2 st)
     ('!' :: '=' :: _) => Right (MkTok sp TNotEq, advanceN 2 st)
@@ -289,6 +302,9 @@ lexOne st =
     ('&' :: '&' :: _) => Right (MkTok sp TAnd, advanceN 2 st)
     ('|' :: '|' :: _) => Right (MkTok sp TOr, advanceN 2 st)
     ('|' :: '>' :: _) => Right (MkTok sp TPipeForward, advanceN 2 st)
+    ('+' :: _) => Right (MkTok sp TPlus, advance st)
+    ('*' :: _) => Right (MkTok sp TStar, advance st)
+    ('/' :: _) => Right (MkTok sp TSlash, advance st)
     ('"' :: _) => do
       (s, st') <- lexString st
       let endSpan = MkSpan sp.line sp.col st'.line st'.col
@@ -595,6 +611,54 @@ mutual
   parseBuiltinNoArg "lenChars" _ = Right BLenChars
   parseBuiltinNoArg name sp = Left (ParseError sp ("Builtin '" ++ name ++ "' requires arguments, use in fn definition instead"))
 
+  -- Parse multiplicative operator (* /)
+  pMulOp : ParseState -> Maybe (Span -> SExpr -> SExpr -> SExpr, ParseState)
+  pMulOp st =
+    let tok = currentTok st
+    in case tok.tok of
+         TStar => Just (\sp, l, r => SMul sp l r, advanceP st)
+         TSlash => Just (\sp, l, r => SDiv sp l r, advanceP st)
+         _ => Nothing
+
+  -- Parse multiplicative expression (left associative)
+  pMulExpr : Parser SExpr
+  pMulExpr st = do
+    (left, st) <- pPrimaryExpr st
+    pMulExprCont left st
+    where
+      pMulExprCont : SExpr -> Parser SExpr
+      pMulExprCont left st =
+        case pMulOp st of
+          Just (mkOp, st') => do
+            let sp = (currentTok st).span
+            (right, st'') <- pPrimaryExpr st'
+            pMulExprCont (mkOp sp left right) st''
+          Nothing => Right (left, st)
+
+  -- Parse additive operator (+ -)
+  pAddOp : ParseState -> Maybe (Span -> SExpr -> SExpr -> SExpr, ParseState)
+  pAddOp st =
+    let tok = currentTok st
+    in case tok.tok of
+         TPlus => Just (\sp, l, r => SAdd sp l r, advanceP st)
+         TMinus => Just (\sp, l, r => SSub sp l r, advanceP st)
+         _ => Nothing
+
+  -- Parse additive expression (left associative)
+  pAddExpr : Parser SExpr
+  pAddExpr st = do
+    (left, st) <- pMulExpr st
+    pAddExprCont left st
+    where
+      pAddExprCont : SExpr -> Parser SExpr
+      pAddExprCont left st =
+        case pAddOp st of
+          Just (mkOp, st') => do
+            let sp = (currentTok st).span
+            (right, st'') <- pMulExpr st'
+            pAddExprCont (mkOp sp left right) st''
+          Nothing => Right (left, st)
+
   -- Parse comparison operator if present
   pComparisonOp : ParseState -> Maybe (Span -> SExpr -> SExpr -> SExpr, ParseState)
   pComparisonOp st =
@@ -608,14 +672,14 @@ mutual
          TGte => Just (\sp, l, r => SGte sp l r, advanceP st)
          _ => Nothing
 
-  -- Parse comparison expression (primary op primary)
+  -- Parse comparison expression (addExpr op addExpr)
   pComparisonExpr : Parser SExpr
   pComparisonExpr st = do
-    (left, st) <- pPrimaryExpr st
+    (left, st) <- pAddExpr st
     case pComparisonOp st of
       Just (mkOp, st') => do
         let sp = (currentTok st).span
-        (right, st'') <- pPrimaryExpr st'
+        (right, st'') <- pAddExpr st'
         Right (mkOp sp left right, st'')
       Nothing => Right (left, st)
 

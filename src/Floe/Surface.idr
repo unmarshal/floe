@@ -127,6 +127,10 @@ data SExpr
   | SLte Span SExpr SExpr            -- expr <= expr
   | SGte Span SExpr SExpr            -- expr >= expr
   | SIf Span SExpr SExpr SExpr       -- if cond then e1 else e2
+  | SAdd Span SExpr SExpr            -- expr + expr
+  | SSub Span SExpr SExpr            -- expr - expr
+  | SMul Span SExpr SExpr            -- expr * expr
+  | SDiv Span SExpr SExpr            -- expr / expr
 
 public export covering
 Show SExpr where
@@ -148,6 +152,10 @@ Show SExpr where
   show (SAnd _ l r) = "(" ++ show l ++ " && " ++ show r ++ ")"
   show (SOr _ l r) = "(" ++ show l ++ " || " ++ show r ++ ")"
   show (SIf _ c t e) = "if " ++ show c ++ " then " ++ show t ++ " else " ++ show e
+  show (SAdd _ l r) = "(" ++ show l ++ " + " ++ show r ++ ")"
+  show (SSub _ l r) = "(" ++ show l ++ " - " ++ show r ++ ")"
+  show (SMul _ l r) = "(" ++ show l ++ " * " ++ show r ++ ")"
+  show (SDiv _ l r) = "(" ++ show l ++ " / " ++ show r ++ ")"
 
 public export
 exprSpan : SExpr -> Span
@@ -169,6 +177,10 @@ exprSpan (SGt s _ _) = s
 exprSpan (SLte s _ _) = s
 exprSpan (SGte s _ _) = s
 exprSpan (SIf s _ _ _) = s
+exprSpan (SAdd s _ _) = s
+exprSpan (SSub s _ _) = s
+exprSpan (SMul s _ _) = s
+exprSpan (SDiv s _ _) = s
 
 -----------------------------------------------------------
 -- Map field specifications

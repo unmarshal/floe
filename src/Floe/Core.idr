@@ -94,6 +94,11 @@ data MapExpr : Schema -> Ty -> Type where
   -- If-then-else with nullable condition (result is Maybe t)
   -- When condition references Maybe columns, result becomes nullable
   MIfNullable : (cond : FilterExpr s) -> (thenE : MapExpr s t) -> (elseE : MapExpr s t) -> MapExpr s (TMaybe t)
+  -- Arithmetic operations (both operands must be same numeric type)
+  MAdd : MapExpr s t -> MapExpr s t -> MapExpr s t
+  MSub : MapExpr s t -> MapExpr s t -> MapExpr s t
+  MMul : MapExpr s t -> MapExpr s t -> MapExpr s t
+  MDiv : MapExpr s t -> MapExpr s t -> MapExpr s t
 
 -----------------------------------------------------------
 -- Schema Transformations (type-level functions)
