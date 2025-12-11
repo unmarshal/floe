@@ -1,0 +1,34 @@
+-- Test string builtin functions
+
+schema RawUrl {
+    id: String,
+    url: String,
+    name: String,
+}
+
+schema CleanUrl {
+    id: String,
+    url: String,
+    name: String,
+    name_upper: String,
+    name_len: Int64,
+}
+
+fn normalizeUrl :: String -> String
+fn normalizeUrl = trim >> toLowercase >> stripPrefix "https://"
+
+fn cleanUrls :: RawUrl -> CleanUrl
+fn cleanUrls =
+    transform [url] normalizeUrl >>
+    map {
+        id: .id,
+        url: .url,
+        name: .name,
+        name_upper: toUppercase .name,
+        name_len: lenChars .name
+    }
+
+fn main =
+    read "input.parquet" as RawUrl
+    |> cleanUrls
+    sink "output.parquet"

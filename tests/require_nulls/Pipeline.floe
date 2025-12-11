@@ -1,0 +1,27 @@
+-- Test require operation filters nulls and refines Maybe T -> T
+
+schema UserInput {
+    id: String,
+    name: Maybe String,
+    age: Maybe Int64,
+}
+
+schema UserComplete {
+    id: String,
+    name: String,
+    age: Int64,
+}
+
+fn filterComplete :: UserInput -> UserComplete
+fn filterComplete =
+    require [name, age] >>
+    map {
+        id: .id,
+        name: .name,
+        age: .age
+    }
+
+fn main =
+    read "input.parquet" as UserInput
+    |> filterComplete
+    sink "output.parquet"

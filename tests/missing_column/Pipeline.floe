@@ -1,0 +1,26 @@
+-- Test runtime schema validation catches missing columns
+
+schema Expected {
+    id: String,
+    name: String,
+    email: String,
+}
+
+schema Output {
+    id: String,
+    name: String,
+    email: String,
+}
+
+fn passthrough :: Expected -> Output
+fn passthrough =
+    map {
+        id: .id,
+        name: .name,
+        email: .email
+    }
+
+fn main =
+    read "input.parquet" as Expected
+    |> passthrough
+    sink "output.parquet"
