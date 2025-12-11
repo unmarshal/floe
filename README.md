@@ -10,7 +10,7 @@ Data pipelines fail at runtime with schema mismatches, missing columns, and type
 
 Floe uses dependent types (in Idris 2) to make invalid pipelines unrepresentable. If your pipeline compiles, every column reference is valid, every type matches, and the output schema is exactly what you declared.
 
-```floe
+```idris
 schema RawUser {
     user_id: String,
     full_name: String,
@@ -39,7 +39,7 @@ The compiler proves:
 
 If you make a mistake, the compiler catches it:
 
-```floe
+```idris
 fn cleanUser :: RawUser -> User
 fn cleanUser =
     rename user_id id >>
@@ -65,7 +65,7 @@ make test
 
 ## Operations
 
-```floe
+```idris
 -- Rename a column
 rename old_name new_name
 
@@ -131,7 +131,7 @@ Why? Because columnar operations (rename, drop, filter, join, map) can be:
 
 If you need custom logic, define a scalar function with builtins:
 
-```floe
+```idris
 fn normalizeUrl :: String -> String
 fn normalizeUrl = trim >> toLowercase >> stripPrefix "https://"
 ```
