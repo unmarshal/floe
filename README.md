@@ -69,16 +69,16 @@ String functions available for use in `transform` and scalar function definition
 
 Builtins can be chained: `trim >> toLowercase >> stripPrefix "https://"`
 
-| Floe | Polars | Description |
-|------|--------|-------------|
-| `toLowercase` | `.str.to_lowercase()` | Convert to lowercase |
-| `toUppercase` | `.str.to_uppercase()` | Convert to uppercase |
-| `trim` | `.str.strip_chars()` | Remove leading/trailing whitespace |
-| `lenChars` | `.str.len_chars()` | String length in characters |
-| `replace old new` | `.str.replace(old, new)` | Replace substring |
-| `stripPrefix p` | `.str.strip_prefix(p)` | Remove prefix if present |
-| `stripSuffix s` | `.str.strip_suffix(s)` | Remove suffix if present |
-| `cast Type` | `.cast(Type)` | Type conversion |
+| Builtin | Description |
+|---------|-------------|
+| `toLowercase` | Convert to lowercase |
+| `toUppercase` | Convert to uppercase |
+| `trim` | Remove leading/trailing whitespace |
+| `lenChars` | String length in characters |
+| `replace old new` | Replace substring |
+| `stripPrefix p` | Remove prefix if present |
+| `stripSuffix s` | Remove suffix if present |
+| `cast Type` | Type conversion |
 
 ## Not a General-Purpose Language
 
