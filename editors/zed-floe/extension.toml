@@ -8,5 +8,5 @@ repository = "https://github.com/unmarshal/floe"
 
 [grammars.floe]
 repository = "https://github.com/unmarshal/floe"
-commit = "eab8d8e0109514bef030c9be8ca8afacda18ec87"
+commit = "83de4c3b137e99d9f8f69d5f171fe2644b3961bc"
 path = "editors/tree-sitter-floe"
