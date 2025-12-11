@@ -519,7 +519,7 @@ testElabDecimalArithmetic : TestResult
 testElabDecimalArithmetic =
   let src = """
 schema A { amount: Decimal(10, 2), rate: Decimal(5, 4), }
-schema B { total: Decimal(10, 2), }
+schema B { total: Decimal(10, 4), }
 let t : A -> B = map { total: .amount * .rate }
 """
   in case elabCheck src of

@@ -10,8 +10,8 @@ schema InvoiceWithTax {
     id: String,
     amount: Decimal(10, 2),
     tax_rate: Decimal(5, 4),
-    tax_amount: Decimal(10, 2),
-    total: Decimal(10, 2),
+    tax_amount: Decimal(10, 4),
+    total: Decimal(10, 4),
     doubled: Decimal(10, 2),
 }
 

@@ -370,7 +370,7 @@ elabBuiltinChain span (b :: rest) inTy expectedOut = do
   -- Compose them
   ok (TCCons typedBuiltin typedRest)
 
--- Check if type is nullable (needed for inferExprTy)
+-- Check if type is nullable
 isNullableTy : Ty -> Bool
 isNullableTy (TMaybe _) = True
 isNullableTy _ = False
@@ -382,72 +382,6 @@ anyNullable s (col :: cols) =
   case getColTy s col of
     Just t => isNullableTy t || anyNullable s cols
     Nothing => anyNullable s cols
-
--- Infer type from surface expression (for schema computation)
--- Uses findCol and returns Result (no unsafe defaults)
-inferExprTy : Context -> Schema -> SExpr -> Result Ty
-inferExprTy ctx s (SColRef sp col) =
-  case findCol s col of
-    Nothing => Left (ColNotFound sp col s)
-    Just (MkColProof t _) => Right t
-inferExprTy ctx s (SColRefNullCheck sp col) =
-  case findCol s col of
-    Nothing => Left (ColNotFound sp col s)
-    Just (MkColProof t _) => Right t
-inferExprTy ctx s (SStrLit _ _) = Right TString
-inferExprTy ctx s (SIntLit _ _) = Right TInt64
-inferExprTy ctx s (SFloatLit _ _) = Right TFloat64
-inferExprTy ctx s (SBoolLit _ _) = Right TBool
-inferExprTy ctx s (SVar sp name) =
-  case lookupConstant name ctx of
-    Just constVal => Right (constValueTy constVal)
-    Nothing => Left (ParseError sp "Unknown constant '\{name}'")
-inferExprTy ctx s (SIf sp cond thenE elseE) = do
-  baseTy <- inferExprTy ctx s thenE
-  let condCols = collectExprCols cond
-      isNullable = anyNullable s condCols
-  pure (if isNullable then TMaybe baseTy else baseTy)
-  where
-    collectExprCols : SExpr -> List String
-    collectExprCols (SColRef _ col) = [col]
-    collectExprCols (SColRefNullCheck _ col) = [col]
-    collectExprCols (SEq _ l r) = collectExprCols l ++ collectExprCols r
-    collectExprCols (SNeq _ l r) = collectExprCols l ++ collectExprCols r
-    collectExprCols (SLt _ l r) = collectExprCols l ++ collectExprCols r
-    collectExprCols (SGt _ l r) = collectExprCols l ++ collectExprCols r
-    collectExprCols (SLte _ l r) = collectExprCols l ++ collectExprCols r
-    collectExprCols (SGte _ l r) = collectExprCols l ++ collectExprCols r
-    collectExprCols (SAnd _ l r) = collectExprCols l ++ collectExprCols r
-    collectExprCols (SOr _ l r) = collectExprCols l ++ collectExprCols r
-    collectExprCols _ = []
-inferExprTy ctx s (SAdd sp l r) = inferExprTy ctx s l
-inferExprTy ctx s (SSub sp l r) = inferExprTy ctx s l
-inferExprTy ctx s (SMul sp l r) = inferExprTy ctx s l
-inferExprTy ctx s (SDiv sp l r) = inferExprTy ctx s l
-inferExprTy ctx s (SMod sp l r) = inferExprTy ctx s l
-inferExprTy ctx s (SConcat sp l r) = Right TString  -- String concatenation always produces String
-inferExprTy ctx s (SCast sp expr targetTy) = Right (toCoreTy targetTy)
-inferExprTy ctx s expr = Left (ParseError (exprSpan expr) "Cannot infer type for expression")
-
--- Convert a single processed field to a column in the output schema
-fieldToCol : Context -> Schema -> ProcessedField -> Result Col
-fieldToCol ctx srcSchema (PFColAssign newName oldName) =
-  case findCol srcSchema oldName of
-    Nothing => Left (ColNotFound dummySpan oldName srcSchema)  -- TODO: need proper span from ProcessedField
-    Just (MkColProof t _) => Right (MkCol newName t)
-fieldToCol ctx srcSchema (PFHashAssign newName _) = Right (MkCol newName TString)
-fieldToCol ctx srcSchema (PFFnApp newName _ colName) =
-  case findCol srcSchema colName of
-    Nothing => Left (ColNotFound dummySpan colName srcSchema)  -- TODO: need proper span
-    Just (MkColProof t _) => Right (MkCol newName t)
-fieldToCol ctx srcSchema (PFBuiltinApp newName builtin colName) =
-  case findCol srcSchema colName of
-    Nothing => Left (ColNotFound dummySpan colName srcSchema)  -- TODO: need proper span
-    Just (MkColProof t _) => Right (MkCol newName (builtinOutputTy builtin t))
-fieldToCol ctx srcSchema (PFExpr newName expr) = do
-  t <- inferExprTy ctx srcSchema expr
-  pure (MkCol newName t)
-fieldToCol ctx srcSchema PFSpread = Right (MkCol "" TString)  -- Dummy, should never be called directly
 
 -- Check if list contains spread
 hasSpread : List ProcessedField -> Bool
@@ -503,26 +437,6 @@ computeSpreadSchema (col@(MkCol name _) :: rest) consumedCols =
     then computeSpreadSchema rest consumedCols
     else col :: computeSpreadSchema rest consumedCols
 
--- Convert processed fields to schema (preserving order), excluding spread
-fieldsToSchema : Context -> Schema -> List ProcessedField -> Result Schema
-fieldsToSchema ctx srcSchema [] = Right []
-fieldsToSchema ctx srcSchema (PFSpread :: rest) = fieldsToSchema ctx srcSchema rest  -- Skip spread
-fieldsToSchema ctx srcSchema (f :: rest) = do
-  col <- fieldToCol ctx srcSchema f
-  rest' <- fieldsToSchema ctx srcSchema rest
-  pure (col :: rest')
-
--- Compute output schema for map operation
--- Explicit fields come first, then spread columns (if spread is present)
-computeMapSchema : Context -> Schema -> List ProcessedField -> Result Schema
-computeMapSchema ctx srcSchema fields = do
-  explicitSchema <- fieldsToSchema ctx srcSchema fields
-  pure (if hasSpread fields
-         then let consumedCols = getConsumedColumns fields
-                  spreadSchema = computeSpreadSchema srcSchema consumedCols
-              in explicitSchema ++ spreadSchema
-         else explicitSchema)
-
 -- Forward declaration for MapExprResult and elabMapExpr (defined after elabFilterExpr)
 data MapExprResult : Schema -> Type where
   MkMapExprResult : (t : Ty) -> MapExpr s t -> MapExprResult s
@@ -535,39 +449,41 @@ data ArithOp = AOAdd | AOSub | AOMul | AODiv | AOMod
 -- Forward declaration for arithmetic helper
 elabArithOp : Context -> Span -> (s : Schema) -> ArithOp -> SExpr -> SExpr -> Result (MapExprResult s)
 
--- Convert a single ProcessedField to a MapAssign with proof
--- Returns Nothing if the column doesn't exist
-elabMapAssign : Context -> Span -> (s : Schema) -> ProcessedField -> Result (MapAssign s)
-elabMapAssign ctx span s (PFColAssign new old) =
+-- Elaborate a single field and return both the column and the typed assignment
+elabMapFieldWithCol : Context -> Span -> (s : Schema) -> ProcessedField -> Result (Col, MapAssign s)
+elabMapFieldWithCol ctx span s (PFColAssign new old) =
   case findCol s old of
-    Just (MkColProof t prf) => ok (ColAssign new old prf)
+    Just (MkColProof t prf) => ok (MkCol new t, ColAssign new old prf)
     Nothing => err (ColNotFound span old s)
-elabMapAssign ctx span s (PFHashAssign new cols) =
+elabMapFieldWithCol ctx span s (PFHashAssign new cols) =
   case findAllCols s cols of
-    Just prf => ok (HashAssign new cols prf)
+    Just prf => ok (MkCol new TString, HashAssign new cols prf)
     Nothing => err (ParseError span "One or more columns not found in hash")
-elabMapAssign ctx span s (PFFnApp new fn col) =
+elabMapFieldWithCol ctx span s (PFFnApp new fn col) =
   case findCol s col of
-    Just (MkColProof t prf) => ok (FnAppAssign new fn col prf)
+    Just (MkColProof t prf) => ok (MkCol new t, FnAppAssign new fn col prf)
     Nothing => err (ColNotFound span col s)
-elabMapAssign ctx span s (PFBuiltinApp new builtin col) =
+elabMapFieldWithCol ctx span s (PFBuiltinApp new builtin col) =
   case findCol s col of
-    Just (MkColProof t prf) => ok (BuiltinAppAssign new builtin col prf)
+    Just (MkColProof t prf) =>
+      ok (MkCol new (builtinOutputTy builtin t), BuiltinAppAssign new builtin col prf)
     Nothing => err (ColNotFound span col s)
-elabMapAssign ctx span s (PFExpr new expr) = do
+elabMapFieldWithCol ctx span s (PFExpr new expr) = do
   MkMapExprResult ty mapExpr <- elabMapExpr ctx span s expr
-  ok (ExprAssign new ty mapExpr)
-elabMapAssign ctx span s PFSpread = err (ParseError span "Internal error: PFSpread should be filtered out")
+  ok (MkCol new ty, ExprAssign new ty mapExpr)
+elabMapFieldWithCol ctx span s PFSpread =
+  err (ParseError span "Internal error: PFSpread should be filtered out")
 
--- Convert ProcessedField list to MapAssign list with proofs
--- Spread fields are filtered out - they're handled at schema level only
-elabMapAssignsWithSpan : Context -> Span -> (s : Schema) -> List ProcessedField -> Result (List (MapAssign s))
-elabMapAssignsWithSpan ctx span s [] = ok []
-elabMapAssignsWithSpan ctx span s (PFSpread :: rest) = elabMapAssignsWithSpan ctx span s rest  -- Skip spread
-elabMapAssignsWithSpan ctx span s (f :: rest) = do
-  assign <- elabMapAssign ctx span s f
-  assigns <- elabMapAssignsWithSpan ctx span s rest
-  ok (assign :: assigns)
+-- Elaborate all fields and return both schema and typed assignments
+elabMapFieldsWithSchema : Context -> Span -> (s : Schema) -> List ProcessedField
+                        -> Result (Schema, List (MapAssign s))
+elabMapFieldsWithSchema ctx span s [] = ok ([], [])
+elabMapFieldsWithSchema ctx span s (PFSpread :: rest) =
+  elabMapFieldsWithSchema ctx span s rest  -- Skip spread
+elabMapFieldsWithSchema ctx span s (f :: rest) = do
+  (col, assign) <- elabMapFieldWithCol ctx span s f
+  (schema, assigns) <- elabMapFieldsWithSchema ctx span s rest
+  ok (col :: schema, assign :: assigns)
 
 -----------------------------------------------------------
 -- Elaborate Filter Expression
@@ -855,8 +771,14 @@ elabOp ctx sIn (SFilter span expr) = do
 -- Map: field assignments defining new schema
 elabOp ctx sIn (SMap span fields) = do
   let processedFields = processMapFields fields
-  outSchema <- computeMapSchema ctx sIn processedFields
-  assigns <- elabMapAssignsWithSpan ctx span sIn processedFields
+  -- Elaborate fields to get both schema and typed assignments in one pass
+  (explicitSchema, assigns) <- elabMapFieldsWithSchema ctx span sIn processedFields
+  -- Handle spread operator: add unconsumed columns to schema
+  let outSchema = if hasSpread processedFields
+                    then let consumedCols = getConsumedColumns processedFields
+                             spreadSchema = computeSpreadSchema sIn consumedCols
+                         in explicitSchema ++ spreadSchema
+                    else explicitSchema
   let spreadCols = if hasSpread processedFields
                      then map (\(MkCol name _) => name) (computeSpreadSchema sIn (getConsumedColumns processedFields))
                      else []
