@@ -19,7 +19,7 @@ let convertTypes : Input -> Output =
         asString: .intValue as String
     }
 
-main =
-    read "input.parquet" as Input
-    |> convertTypes
-    sink "output.parquet"
+main = do
+    data <- read "input.parquet" as Input
+    result <- data |> convertTypes
+    sink "output.parquet" result

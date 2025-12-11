@@ -20,7 +20,7 @@ let computeCasts : Input -> Output =
         diff_as_uint32: (.x - .y) as UInt32
     }
 
-main =
-    read "input.parquet" as Input
-    |> computeCasts
-    sink "output.parquet"
+main = do
+    data <- read "input.parquet" as Input
+    result <- data |> computeCasts
+    sink "output.parquet" result

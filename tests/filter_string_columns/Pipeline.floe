@@ -13,7 +13,7 @@ schema MatchedEmployee {
 let filterMatched : Employee -> MatchedEmployee =
     filter .department == .assigned_team
 
-main =
-    read "employees.parquet" as Employee
-    |> filterMatched
-    sink "output.parquet"
+main = do
+    data <- read "employees.parquet" as Employee
+    result <- data |> filterMatched
+    sink "output.parquet" result

@@ -82,6 +82,10 @@ schema User {
     email: String,
 }
 
+-- Operators:
+-- >> composes operations in pipeline definitions
+-- |> pipes data through transformations in main
+
 -- Pipeline bindings with type annotation
 let cleanUser : RawUser -> User =
     rename user_id id >>
@@ -89,11 +93,11 @@ let cleanUser : RawUser -> User =
     rename email_address email >>
     drop [is_active]
 
--- Entry point
-main =
-    read "input.parquet" as RawUser
-    |> cleanUser
-    write "output.parquet"
+-- Entry point: main uses do notation
+main = do
+    data <- read "input.parquet" as RawUser
+    result <- data |> cleanUser
+    sink "output.parquet" result
 
 -- Typed constants
 let minPrice : Int64 = 100
@@ -150,6 +154,46 @@ All bindings use the unified syntax `let name : Type = value`:
 - **Constants**: `let minAge : Int = 18` - typed constants usable in expressions
 - **Pipelines**: `let transform : SchemaA -> SchemaB = ops...` - schema transformations
 - **Column functions**: `let fn : String -> String = builtins...` - scalar transformers
+
+### Main Entry Point (Do Notation)
+
+The `main` function uses do notation to explicitly track data flow:
+
+```haskell
+main = do
+    data <- read "input.parquet" as InputSchema
+    result <- data |> transform1 |> transform2
+    sink "output.parquet" result
+```
+
+**Do notation statements:**
+- `var <- expr` - bind the result of an expression to a variable
+- `sink "file" expr` - write the result to a file
+
+**Main expressions:**
+- `read "file" as Schema` - read data from a Parquet file
+- `data |> transform` - pipe data through a transformation
+- `apply transform data` - apply a transformation (alternative syntax)
+- `var` - reference a previously bound variable
+
+**Examples:**
+
+Using `|>` for chaining:
+```haskell
+main = do
+    data <- read "input.parquet" as Sales
+    cleaned <- data |> cleanData |> filterActive
+    sink "output.parquet" cleaned
+```
+
+Using `apply` for step-by-step transformations:
+```haskell
+main = do
+    data <- read "input.parquet" as Sales
+    cleaned <- apply cleanData data
+    filtered <- apply filterActive cleaned
+    sink "output.parquet" filtered
+```
 
 ### Operations
 

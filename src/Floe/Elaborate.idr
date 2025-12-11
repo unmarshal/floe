@@ -923,23 +923,33 @@ validateLetBinds ctx sigs (b :: rest) = do
   _ <- elabLetBind ctx sigs b
   validateLetBinds ctx sigs rest
 
--- Validate main entry point
-validateMainStep : Context -> SMainStep -> Result ()
-validateMainStep ctx (SRead sp file schemaName) =
+-- Validate main expressions
+validateMainExpr : Context -> SMainExpr -> Result ()
+validateMainExpr ctx (SMRead sp file schemaName) =
   case lookupSchema schemaName ctx of
     Just _ => ok ()
     Nothing => err (ParseError sp ("Schema '" ++ schemaName ++ "' is not defined"))
-validateMainStep ctx (SPipeThrough sp fnName) = ok ()  -- TODO: validate function exists
-validateMainStep ctx (SWrite sp file) = ok ()
+validateMainExpr ctx (SMApply sp transform expr) = do
+  validateMainExpr ctx expr
+  ok ()  -- TODO: validate transform exists
+validateMainExpr ctx (SMPipe sp expr transform) = do
+  validateMainExpr ctx expr
+  ok ()  -- TODO: validate transform exists
+validateMainExpr ctx (SMVar sp name) = ok ()  -- TODO: validate variable is bound
+
+-- Validate main statements
+validateMainStmt : Context -> SMainStmt -> Result ()
+validateMainStmt ctx (SMBind sp name expr) = validateMainExpr ctx expr
+validateMainStmt ctx (SMSink sp file expr) = validateMainExpr ctx expr
 
 validateMain : Context -> Maybe SMain -> Result ()
 validateMain ctx Nothing = ok ()
 validateMain ctx (Just m) = go m.body
   where
-    go : List SMainStep -> Result ()
+    go : List SMainStmt -> Result ()
     go [] = ok ()
-    go (step :: rest) = do
-      validateMainStep ctx step
+    go (stmt :: rest) = do
+      validateMainStmt ctx stmt
       go rest
 
 -- Register scalar function types (e.g., fn strip_prefix :: String -> String)
