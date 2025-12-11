@@ -281,6 +281,8 @@ mapExprToPolars (MDiv _ l r) = "(" ++ mapExprToPolars l ++ " / " ++ mapExprToPol
 mapExprToPolars (MMod _ l r) = "(" ++ mapExprToPolars l ++ " % " ++ mapExprToPolars r ++ ")"
 mapExprToPolars (MConcat l r) = "pl.concat_str([" ++ mapExprToPolars l ++ ", " ++ mapExprToPolars r ++ "])"
 mapExprToPolars (MCast targetTy expr) = "(" ++ mapExprToPolars expr ++ ").cast(pl." ++ tyToPolars targetTy ++ ")"
+-- Compiler-inserted integer literal coercion
+mapExprToPolars (MIntCoerce _ i) = "pl.lit(" ++ show i ++ ")"  -- Polars handles type inference
 
 -----------------------------------------------------------
 -- Map Codegen Helpers

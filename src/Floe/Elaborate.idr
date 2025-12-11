@@ -666,10 +666,10 @@ getIntLit (SIntLit _ i) = Just i
 getIntLit _ = Nothing
 
 -- Create a MapExpr for a literal coerced to a given numeric type
--- Integer literals are Int64 by default, coerced to target type at codegen
-coerceLiteral : (s : Schema) -> Integer -> (t : Ty) -> MapExpr s t
-coerceLiteral s i TInt64 = MIntLit i
-coerceLiteral s i _ = believe_me (MIntLit {s} i)  -- Polars handles coercion
+-- Uses MIntCoerce for non-Int64 numeric types
+coerceLiteral : (s : Schema) -> Integer -> (t : Ty) -> IsNumeric t -> MapExpr s t
+coerceLiteral s i TInt64 prf = MIntLit i
+coerceLiteral s i t prf = MIntCoerce prf i
 
 elabArithOp ctx span s op left right = do
   -- Check for literal coercion cases first
@@ -678,14 +678,14 @@ elabArithOp ctx span s op left right = do
     (Just leftVal, Nothing) => do
       MkMapExprResult rightTy rightExpr <- elabMapExpr ctx span s right
       case isNumeric rightTy of
-        Just prf => let leftExpr = coerceLiteral s leftVal rightTy
+        Just prf => let leftExpr = coerceLiteral s leftVal rightTy prf
                     in ok (MkMapExprResult rightTy (applyArithOp prf op leftExpr rightExpr))
         Nothing => err (ParseError span ("Arithmetic requires numeric types, got: " ++ show rightTy))
     -- Right is literal, left is not - coerce right to left's type
     (Nothing, Just rightVal) => do
       MkMapExprResult leftTy leftExpr <- elabMapExpr ctx span s left
       case isNumeric leftTy of
-        Just prf => let rightExpr = coerceLiteral s rightVal leftTy
+        Just prf => let rightExpr = coerceLiteral s rightVal leftTy prf
                     in ok (MkMapExprResult leftTy (applyArithOp prf op leftExpr rightExpr))
         Nothing => err (ParseError span ("Arithmetic requires numeric types, got: " ++ show leftTy))
     -- Both literals or neither - use standard elaboration
@@ -703,15 +703,14 @@ elabArithOp ctx span s op left right = do
             Nothing => err (ParseError span ("Arithmetic requires numeric types, got: " ++ show t1))
         No _ =>
           -- Check for Decimal with different precision/scale
+          -- We use the general MCast for Decimal coercion since we can't convince Idris
+          -- that e1 has type TDecimal p1 s1 just from pattern matching on t1
           case (t1, t2) of
             (TDecimal p1 s1, TDecimal p2 s2) =>
-              -- Decimals are compatible - use max precision/scale for result
-              -- Polars handles Decimal arithmetic automatically, so we use believe_me
-              -- to coerce the types in the IR (codegen doesn't depend on exact types)
               let resultTy = decimalResultTy p1 s1 p2 s2
-                  -- Coerce both expressions to result type for the IR
-                  e1' : MapExpr s resultTy = believe_me e1
-                  e2' : MapExpr s resultTy = believe_me e2
+                  -- Use MCast to coerce (backends handle Decimal precision)
+                  e1' : MapExpr s resultTy = MCast resultTy e1
+                  e2' : MapExpr s resultTy = MCast resultTy e2
               in case isNumeric resultTy of
                    Just prf => ok (MkMapExprResult resultTy (applyArithOp prf op e1' e2'))
                    Nothing => err (ParseError span "Internal error: Decimal should be numeric")

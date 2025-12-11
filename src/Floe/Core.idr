@@ -179,8 +179,23 @@ data MapExpr : Schema -> Ty -> Type where
   MMod : {0 t : Ty} -> (0 prf : IsNumeric t) -> MapExpr s t -> MapExpr s t -> MapExpr s t
   -- String concatenation
   MConcat : MapExpr s TString -> MapExpr s TString -> MapExpr s TString
-  -- Cast expression: converts expr from type t1 to type t2
+  -- Cast expression: converts expr from type t1 to type t2 (user-specified)
   MCast : (targetTy : Ty) -> MapExpr s t1 -> MapExpr s targetTy
+
+  -- Compiler-inserted integer literal coercion
+  -- BACKEND REQUIREMENT: Must support coercing integer literals to any numeric type
+  -- Backends that don't support this should fail at codegen time
+
+  -- Integer literal coercion to any numeric type
+  -- Backend must handle: literal integers can become any numeric type without loss
+  -- Example: 2 becomes Decimal(10,2), Int64, Float64, etc.
+  -- Polars: pl.lit(2) automatically infers type from context
+  MIntCoerce : {0 t : Ty} -> IsNumeric t -> Integer -> MapExpr s t
+
+  -- Note: Decimal precision adjustment uses MCast
+  -- We can't use a specific MDecimalCoerce constructor because Idris can't refine
+  -- the type from pattern matching (MapExpr s t1 doesn't become MapExpr s (TDecimal p s))
+  -- MCast is sufficient since backends handle Decimal precision changes
 
 -----------------------------------------------------------
 -- Schema Transformations (type-level functions)
