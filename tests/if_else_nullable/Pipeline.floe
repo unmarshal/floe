@@ -18,7 +18,7 @@ let categorizeNullable : Input -> Output =
         category: if .maybe_value > 100 then "high" else "low"
     }
 
-main =
-    read "input.parquet" as Input
-    |> categorizeNullable
-    sink "output.parquet"
+main = do
+    data <- read "input.parquet" as Input
+    result <- data |> categorizeNullable
+    sink "output.parquet" result

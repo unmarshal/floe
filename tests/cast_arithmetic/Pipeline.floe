@@ -17,7 +17,7 @@ let computeTotals : Input -> Output =
         discounted_total: .price as Int64 * .quantity as Int64 * (100 - .discount_percent as Int64) / 100
     }
 
-main =
-    read "input.parquet" as Input
-    |> computeTotals
-    sink "output.parquet"
+main = do
+    data <- read "input.parquet" as Input
+    result <- data |> computeTotals
+    sink "output.parquet" result

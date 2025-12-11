@@ -22,7 +22,7 @@ let calculateTotals : Product -> OrderSummary =
         profit_margin: .price / 10 + 5
     }
 
-main =
-    read "input.parquet" as Product
-    |> calculateTotals
-    sink "output.parquet"
+main = do
+    data <- read "input.parquet" as Product
+    result <- data |> calculateTotals
+    sink "output.parquet" result

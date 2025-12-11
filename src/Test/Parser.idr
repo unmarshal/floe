@@ -234,7 +234,9 @@ testParseMainSimple : TestResult
 testParseMainSimple =
   let src = """
 schema A { x: String, }
-main = read "in.parquet" as A sink "out.parquet"
+main = do
+    data <- read "in.parquet" as A
+    sink "out.parquet" data
 """
       check = \p => case getMain p of
                       Just m => length m.body == 2
@@ -249,7 +251,10 @@ testParseMainWithPipe =
 schema A { x: String, }
 schema B { x: String, }
 let t : A -> B = select [x]
-main = read "in.parquet" as A |> t sink "out.parquet"
+main = do
+    data <- read "in.parquet" as A
+    result <- data |> t
+    sink "out.parquet" result
 """
       check = \p => case getMain p of
                       Just m => length m.body == 3
@@ -257,6 +262,43 @@ main = read "in.parquet" as A |> t sink "out.parquet"
   in case parseAndCheck src check of
        Right () => pass "parse main with pipe"
        Left e => fail "parse main with pipe" e
+
+testParseMainWithApply : TestResult
+testParseMainWithApply =
+  let src = """
+schema A { x: String, }
+schema B { x: String, }
+let t : A -> B = select [x]
+main = do
+    data <- read "in.parquet" as A
+    result <- apply t data
+    sink "out.parquet" result
+"""
+      check = \p => case getMain p of
+                      Just m => length m.body == 3
+                      Nothing => False
+  in case parseAndCheck src check of
+       Right () => pass "parse main with apply"
+       Left e => fail "parse main with apply" e
+
+testParseMainWithChainedPipes : TestResult
+testParseMainWithChainedPipes =
+  let src = """
+schema A { x: String, }
+schema B { x: String, }
+let t1 : A -> B = select [x]
+let t2 : B -> B = select [x]
+main = do
+    data <- read "in.parquet" as A
+    result <- data |> t1 |> t2
+    sink "out.parquet" result
+"""
+      check = \p => case getMain p of
+                      Just m => length m.body == 3
+                      Nothing => False
+  in case parseAndCheck src check of
+       Right () => pass "parse main with chained pipes"
+       Left e => fail "parse main with chained pipes" e
 
 -----------------------------------------------------------
 -- Comment Parsing Tests
@@ -355,6 +397,8 @@ parserTests = suite "Parser Tests"
   , testParsePipelineChain
   , testParseMainSimple
   , testParseMainWithPipe
+  , testParseMainWithApply
+  , testParseMainWithChainedPipes
   , testParseWithComments
   , testParseFieldWithUnderscore
   , testParseSchemaNameWithUnderscore

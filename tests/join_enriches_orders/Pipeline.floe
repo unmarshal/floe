@@ -19,7 +19,7 @@ let enrich : Order -> EnrichedOrder =
     join users on .user_id == .id
     >> map { order_id: .order_id, name: .name }
 
-main =
-    read "orders.parquet" as Order
-    |> enrich
-    sink "output.parquet"
+main = do
+    data <- read "orders.parquet" as Order
+    result <- data |> enrich
+    sink "output.parquet" result

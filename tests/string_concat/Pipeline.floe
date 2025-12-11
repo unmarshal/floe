@@ -16,4 +16,7 @@ let transform : Input -> Output = map {
     greeting: "Hello, " ++ .title ++ " " ++ .last_name,
 }
 
-main = read "input.parquet" as Input |> transform sink "output.parquet"
+main = do
+    data <- read "input.parquet" as Input
+    result <- data |> transform
+    sink "output.parquet" result

@@ -22,7 +22,7 @@ let addFields : Input -> Output =
         ...
     }
 
-main =
-    read "input.parquet" as Input
-    |> addFields
-    sink "output.parquet"
+main = do
+    data <- read "input.parquet" as Input
+    result <- data |> addFields
+    sink "output.parquet" result

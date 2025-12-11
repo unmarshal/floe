@@ -169,6 +169,7 @@ data SExpr
   | SSub Span SExpr SExpr            -- expr - expr
   | SMul Span SExpr SExpr            -- expr * expr
   | SDiv Span SExpr SExpr            -- expr / expr
+  | SMod Span SExpr SExpr            -- expr % expr
   | SConcat Span SExpr SExpr         -- expr ++ expr (string concatenation)
   | SCast Span SExpr STy             -- expr as Type (cast expression)
 

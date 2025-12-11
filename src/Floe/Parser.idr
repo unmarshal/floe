@@ -28,7 +28,10 @@ data Token
   | TIf            -- if
   | TThen          -- then
   | TElse          -- else
+  | TDo            -- do
+  | TApply         -- apply
   | TArrow         -- ->
+  | TLeftArrow     -- <-
   | TFatArrow      -- =>
   | TDoubleColon   -- ::
   | TPipe          -- >>
@@ -78,7 +81,10 @@ Show Token where
   show TIf = "if"
   show TThen = "then"
   show TElse = "else"
+  show TDo = "do"
+  show TApply = "apply"
   show TArrow = "->"
+  show TLeftArrow = "<-"
   show TFatArrow = "=>"
   show TDoubleColon = "::"
   show TPipe = ">>"
@@ -128,7 +134,10 @@ Eq Token where
   TIf == TIf = True
   TThen == TThen = True
   TElse == TElse = True
+  TDo == TDo = True
+  TApply == TApply = True
   TArrow == TArrow = True
+  TLeftArrow == TLeftArrow = True
   TPipeForward == TPipeForward = True
   TFatArrow == TFatArrow = True
   TDoubleColon == TDoubleColon = True
@@ -309,6 +318,8 @@ keyword "on" = TOn
 keyword "if" = TIf
 keyword "then" = TThen
 keyword "else" = TElse
+keyword "do" = TDo
+keyword "apply" = TApply
 keyword s = TIdent s
 
 lexOne : LexState -> Either String (Tok, LexState)
@@ -331,6 +342,7 @@ lexOne st =
     ('?' :: _) => Right (MkTok sp TQuestion, advance st)
     ('-' :: '>' :: _) => Right (MkTok sp TArrow, advanceN 2 st)
     ('-' :: _) => Right (MkTok sp TMinus, advance st)
+    ('<' :: '-' :: _) => Right (MkTok sp TLeftArrow, advanceN 2 st)
     ('=' :: '>' :: _) => Right (MkTok sp TFatArrow, advanceN 2 st)
     ('=' :: '=' :: _) => Right (MkTok sp TDoubleEq, advanceN 2 st)
     ('!' :: '=' :: _) => Right (MkTok sp TNotEq, advanceN 2 st)
@@ -996,49 +1008,93 @@ pFnDef sp name st = do
   Right (MkSFnDef sp name chain, st)
 
 -----------------------------------------------------------
--- Main Body Parser
+-- Main Body Parser (do notation)
 -----------------------------------------------------------
 
--- Parse a main step: read "file" as Schema, |> fn, or write "file"
-pMainStep : Parser SMainStep
-pMainStep st =
+-- Helper to parse file argument (string literal or param identifier)
+pFileArg : Parser String
+pFileArg st =
+  let tok = currentTok st
+  in case tok.tok of
+    TStrLit s => Right (s, advanceP st)
+    TIdent name => Right (name, advanceP st)
+    _ => Left (ParseError tok.span ("Expected string or parameter name, got " ++ show tok.tok))
+
+-- Parse a main expression: read, apply, |>, or variable reference
+pMainExpr : Parser SMainExpr
+pMainExpr st =
   let tok = currentTok st
   in case tok.tok of
     TRead => do
+      -- read "file" as Schema
       let st' = advanceP st  -- skip 'read'
-      -- read "file" as Schema OR read param as Schema
-      (file, st'') <- pMainArg st'
+      (file, st'') <- pFileArg st'
       ((), st''') <- expect TAs st''
       (schema, st'''') <- pIdent st'''
-      Right (SRead tok.span file schema, st'''')
-    TPipeForward => do
-      let st' = advanceP st  -- skip '|>'
+      Right (SMRead tok.span file schema, st'''')
+    TApply => do
+      -- apply transform expr
+      let st' = advanceP st  -- skip 'apply'
       (fnName, st'') <- pIdent st'
-      Right (SPipeThrough tok.span fnName, st'')
-    TWrite => do
-      let st' = advanceP st  -- skip 'write'
-      (file, st'') <- pMainArg st'
-      Right (SWrite tok.span file, st'')
-    TSink => do
-      let st' = advanceP st  -- skip 'sink'
-      (file, st'') <- pMainArg st'
-      Right (SWrite tok.span file, st'')
-    _ => Left (ParseError tok.span ("Expected 'read', '|>', 'write', or 'sink', got " ++ show tok.tok))
-  where
-    -- Parse either a string literal or an identifier (param reference)
-    pMainArg : Parser String
-    pMainArg st =
-      let tok = currentTok st
-      in case tok.tok of
-        TStrLit s => Right (s, advanceP st)
-        TIdent name => Right (name, advanceP st)
-        _ => Left (ParseError tok.span ("Expected string or parameter name, got " ++ show tok.tok))
+      (expr, st''') <- pMainExpr st''
+      Right (SMApply tok.span fnName expr, st''')
+    TIdent name => do
+      -- Variable reference or expr |> fn
+      let st' = advanceP st  -- skip identifier
+      if isToken TPipeForward st'
+        then do
+          -- var |> fn (parse as SMPipe)
+          let st'' = advanceP st'  -- skip '|>'
+          (fnName, st''') <- pIdent st''
+          Right (SMPipe tok.span (SMVar tok.span name) fnName, st''')
+        else
+          -- Just a variable reference
+          Right (SMVar tok.span name, st')
+    _ => Left (ParseError tok.span ("Expected 'read', 'apply', or variable, got " ++ show tok.tok))
 
--- Parse main body: sequence of steps
-pMainBody : Parser (List SMainStep)
+-- Parse chained pipe operations: expr |> fn |> fn
+pMainExprWithPipes : Parser SMainExpr
+pMainExprWithPipes st = do
+  (expr, st') <- pMainExpr st
+  -- Check for |> to continue the chain
+  go expr st'
+  where
+    go : SMainExpr -> ParseState -> Either FloeError (SMainExpr, ParseState)
+    go expr st =
+      if isToken TPipeForward st
+        then do
+          let st' = advanceP st  -- skip '|>'
+          (sp, _) <- pSpan st
+          (fnName, st'') <- pIdent st'
+          let pipeExpr = SMPipe sp expr fnName
+          go pipeExpr st''
+        else
+          Right (expr, st)
+
+-- Parse a main statement: binding or sink
+pMainStmt : Parser SMainStmt
+pMainStmt st =
+  let tok = currentTok st
+  in case tok.tok of
+    TSink => do
+      -- sink "file" expr
+      let st' = advanceP st  -- skip 'sink'
+      (file, st'') <- pFileArg st'
+      (expr, st''') <- pMainExprWithPipes st''
+      Right (SMSink tok.span file expr, st''')
+    TIdent name => do
+      -- var <- expr
+      let st' = advanceP st  -- skip identifier
+      ((), st'') <- expect TLeftArrow st'
+      (expr, st''') <- pMainExprWithPipes st''
+      Right (SMBind tok.span name expr, st''')
+    _ => Left (ParseError tok.span ("Expected identifier or 'sink', got " ++ show tok.tok))
+
+-- Parse main body: do { stmt; stmt; ... }
+pMainBody : Parser (List SMainStmt)
 pMainBody st = do
-  (first, st') <- pMainStep st
-  (rest, st'') <- pMany pMainStep st'
+  (first, st') <- pMainStmt st
+  (rest, st'') <- pMany pMainStmt st'
   Right (first :: rest, st'')
 
 -- Parse optional params after main (identifiers before =)
@@ -1178,12 +1234,13 @@ pTopLevel st =
                   Right (STLTableBind (MkSTableBind tok.span name file schemaName), st''''''')
                 _ => Left (ParseError nextTok.span ("Expected ':' for type annotation or 'read' for table binding"))
     TIdent "main" => do
-      -- main [params] = body
+      -- main [params] = do { stmts }
       let st' = advanceP st  -- skip 'main'
       (params, st'') <- pMainParams st'
       ((), st''') <- expect TEquals st''
-      (body, st'''') <- pMainBody st'''
-      Right (STLMain (MkSMain tok.span params body), st'''')
+      ((), st'''') <- expect TDo st'''
+      (body, st''''') <- pMainBody st''''
+      Right (STLMain (MkSMain tok.span params body), st''''')
     TIdent "transform" => do
       (t, st') <- pLegacyTransform st
       Right (STLTransform t, st')

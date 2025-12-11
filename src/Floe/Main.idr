@@ -20,30 +20,47 @@ import Data.List
 -- Build GeneratedProgram from parsed/elaborated program
 -----------------------------------------------------------
 
+-- Variable environment for tracking bindings in main
+VarEnv : Type
+VarEnv = List (String, List EntryStep)
+
+lookupVar : String -> VarEnv -> Maybe (List EntryStep)
+lookupVar name [] = Nothing
+lookupVar name ((n, steps) :: rest) = if n == name then Just steps else lookupVar name rest
+
 -- Compile main expression to list of entry steps
 -- This flattens the do notation into a sequence of read/pipe/write operations
-compileMainExpr : Context -> SMainExpr -> Either FloeError (List EntryStep)
-compileMainExpr ctx (SMRead sp file schemaName) = do
+compileMainExpr : Context -> VarEnv -> SMainExpr -> Either FloeError (List EntryStep)
+compileMainExpr ctx env (SMRead sp file schemaName) = do
   schema <- note (ParseError sp ("Schema '" ++ schemaName ++ "' is not defined"))
                  (lookupSchema schemaName ctx)
   pure [ERead file schemaName schema]
-compileMainExpr ctx (SMApply sp transform expr) = do
-  steps <- compileMainExpr ctx expr
+compileMainExpr ctx env (SMApply sp transform expr) = do
+  steps <- compileMainExpr ctx env expr
   pure (steps ++ [EPipe transform])
-compileMainExpr ctx (SMPipe sp expr transform) = do
-  steps <- compileMainExpr ctx expr
+compileMainExpr ctx env (SMPipe sp expr transform) = do
+  steps <- compileMainExpr ctx env expr
   pure (steps ++ [EPipe transform])
-compileMainExpr ctx (SMVar sp name) =
-  -- Variable references should have been inlined during elaboration
-  Left (ParseError sp "Unexpected variable reference in main")
+compileMainExpr ctx env (SMVar sp name) = do
+  -- Look up variable in environment and inline its steps
+  steps <- note (ParseError sp ("Variable '" ++ name ++ "' is not defined"))
+                (lookupVar name env)
+  pure steps
 
--- Compile main statement to entry steps
-compileMainStmt : Context -> SMainStmt -> Either FloeError (List EntryStep)
-compileMainStmt ctx (SMBind sp name expr) =
-  compileMainExpr ctx expr  -- Bindings get inlined, just compile the expression
-compileMainStmt ctx (SMSink sp file expr) = do
-  steps <- compileMainExpr ctx expr
-  pure (steps ++ [EWrite file])
+-- Compile main statements to entry steps, threading through variable environment
+compileMainStmts : Context -> VarEnv -> List SMainStmt -> Either FloeError (List EntryStep)
+compileMainStmts ctx env [] = Right []
+compileMainStmts ctx env (SMBind sp name expr :: rest) = do
+  -- Compile the expression and bind it to the variable
+  steps <- compileMainExpr ctx env expr
+  let env' = (name, steps) :: env
+  -- Continue with updated environment
+  compileMainStmts ctx env' rest
+compileMainStmts ctx env (SMSink sp file expr :: rest) = do
+  -- Compile expression and add write step
+  steps <- compileMainExpr ctx env expr
+  restSteps <- compileMainStmts ctx env rest
+  pure (steps ++ [EWrite file] ++ restSteps)
 
 -- Sequence a list of Either into Either of list
 sequenceEither : List (Either e a) -> Either e (List a)
@@ -114,8 +131,7 @@ buildProgram opts ctx prog = do
   (params, steps) <- case getMain prog of
     Nothing => pure ([], [])
     Just m => do
-      stepsLists <- sequenceEither (map (compileMainStmt ctx) m.body)
-      let steps = concat stepsLists  -- Flatten list of lists
+      steps <- compileMainStmts ctx [] m.body  -- Start with empty variable environment
       pure (m.params, steps)
   pure (MkGeneratedProgram opts consts fnDefs tables functions params steps)
 

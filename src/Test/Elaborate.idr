@@ -222,7 +222,9 @@ testElabUndefinedSchemaInMain : TestResult
 testElabUndefinedSchemaInMain =
   let src = """
 schema Input { x: String, }
-main = read "input.parquet" as Undefined sink "output.parquet"
+main = do
+    data <- read "input.parquet" as Undefined
+    sink "output.parquet" data
 """
   in case elabExpectError src "not defined" of
        Right () => pass "elab error: undefined schema in main"

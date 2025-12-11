@@ -26,7 +26,7 @@ let transform : Input -> Output =
 -- Column function with explicit type annotation
 let normalize : String -> String = toLowercase >> trim
 
-main =
-    read "input.parquet" as Input
-    |> transform
-    sink "output.parquet"
+main = do
+    data <- read "input.parquet" as Input
+    result <- data |> transform
+    sink "output.parquet" result

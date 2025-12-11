@@ -20,7 +20,7 @@ let categorize : Input -> Output =
         tier: if .is_premium then "premium" else "standard"
     }
 
-main =
-    read "input.parquet" as Input
-    |> categorize
-    sink "output.parquet"
+main = do
+    data <- read "input.parquet" as Input
+    result <- data |> categorize
+    sink "output.parquet" result

@@ -26,7 +26,7 @@ let cleanUrls : RawUrl -> CleanUrl =
         name_len: lenChars .name
     }
 
-main =
-    read "input.parquet" as RawUrl
-    |> cleanUrls
-    sink "output.parquet"
+main = do
+    data <- read "input.parquet" as RawUrl
+    result <- data |> cleanUrls
+    sink "output.parquet" result
