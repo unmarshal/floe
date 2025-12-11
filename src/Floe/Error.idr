@@ -25,10 +25,11 @@ data FloeError
   | ColNotNullable Span String Ty
   | ColAlreadyExists Span String
   | SchemaNotFound Span String
-  | SchemaMismatch Span Schema Schema
+  | SchemaMismatch Span String String Schema Schema  -- span, inSchema, outSchema, expected, actual
   | ParseError Span String
   | DuplicateSchema Span String
   | DuplicateCol Span String
+  | JoinTypeMismatch Span String Ty String Ty  -- span, leftCol, leftTy, rightCol, rightTy
 
 public export
 Show FloeError where
@@ -43,9 +44,9 @@ Show FloeError where
     show span ++ ": Column '" ++ nm ++ "' already exists in schema"
   show (SchemaNotFound span nm) =
     show span ++ ": Schema '" ++ nm ++ "' not defined"
-  show (SchemaMismatch span expected actual) =
-    show span ++ ": Schema mismatch.\n" ++
-    "  Expected: " ++ showSchema expected ++ "\n" ++
+  show (SchemaMismatch span inS outS expected actual) =
+    show span ++ ": Schema mismatch in transform " ++ inS ++ " -> " ++ outS ++ ".\n" ++
+    "  Expected (" ++ outS ++ "): " ++ showSchema expected ++ "\n" ++
     "  Actual:   " ++ showSchema actual
   show (ParseError span msg) =
     show span ++ ": Parse error: " ++ msg
@@ -53,6 +54,9 @@ Show FloeError where
     show span ++ ": Schema '" ++ nm ++ "' defined multiple times"
   show (DuplicateCol span nm) =
     show span ++ ": Column '" ++ nm ++ "' defined multiple times"
+  show (JoinTypeMismatch span leftCol leftTy rightCol rightTy) =
+    show span ++ ": Join type mismatch: '" ++ leftCol ++ "' has type " ++ show leftTy ++
+    " but '" ++ rightCol ++ "' has type " ++ show rightTy
 
 -----------------------------------------------------------
 -- Result Type

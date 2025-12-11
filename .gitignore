@@ -3,6 +3,10 @@ build/
 *.ttc
 *.ttm
 
+# Python
+__pycache__/
+*.pyc
+
 # Editor files
 *.swp
 *~
@@ -11,3 +15,6 @@ build/
 
 # OS files
 .DS_Store
+
+# Generated output
+out.py

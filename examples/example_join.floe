@@ -1,0 +1,38 @@
+-- Example demonstrating join functionality
+-- Enriches authorship data with organization names
+
+let openalex = "https://openalex.org/"
+
+fn stripOaPrefix :: String -> String
+fn stripOaPrefix = stripPrefix openalex
+
+schema Authorship {
+    publication_id: String,
+    author_id: String,
+    affiliated_organization_id: String,
+    author_position: String,
+}
+
+-- Organization nodes for enrichment via join
+schema OrgNode {
+    id: String,
+    source_id: String,
+    name: String,
+}
+
+-- Enriched edge with organization name
+schema EnrichedEdge {
+    source_id: String,
+    target_id: String,
+    org_name: String,
+}
+
+-- Global table binding for organization lookup
+let orgs = read "org_nodes.parquet" as OrgNode
+
+-- Extract AFFILIATED_WITH edges (authorship -> organization)
+-- Uses join to enrich with organization data
+fn affiliatedWith :: Authorship -> EnrichedEdge
+fn affiliatedWith =
+    join orgs on .affiliated_organization_id == .source_id
+    >> map { source_id: .publication_id, target_id: .id, org_name: .name }

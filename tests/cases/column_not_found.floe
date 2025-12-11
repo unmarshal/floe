@@ -1,0 +1,12 @@
+-- @error "not found"
+schema Input {
+    foo: String,
+}
+
+schema Output {
+    bar: String,
+}
+
+fn bad :: Input -> Output
+fn bad =
+    rename nonexistent bar

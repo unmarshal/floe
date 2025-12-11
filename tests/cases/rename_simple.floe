@@ -1,0 +1,14 @@
+-- @compiles
+schema Input {
+    old_name: String,
+    other: Int64,
+}
+
+schema Output {
+    new_name: String,
+    other: Int64,
+}
+
+fn rename_col :: Input -> Output
+fn rename_col =
+    rename old_name new_name

@@ -1,0 +1,17 @@
+package floe
+
+depends = contrib
+
+sourcedir = "src"
+
+modules = Floe.Types
+        , Floe.Surface
+        , Floe.Core
+        , Floe.Error
+        , Floe.Elaborate
+        , Floe.Codegen
+        , Floe.Parser
+        , Floe.Main
+
+main = Floe.Main
+executable = floe

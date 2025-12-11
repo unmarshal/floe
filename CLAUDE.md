@@ -1,124 +1,70 @@
-# Pipeline DSL Compiler
+# Floe
 
-A dependently-typed compiler for a data pipeline DSL that generates Rust/Polars code with compile-time schema safety guarantees.
+A dependently-typed compiler for a data pipeline DSL that generates Python/Polars code with compile-time schema safety guarantees.
+
+## Quick Start
+
+```bash
+# Build the compiler
+idris2 --build floe.ipkg
+
+# Compile a .floe file to Python
+./build/exec/floe examples/authorship.floe > out.py
+
+# Run tests
+idris2 --build floe-test.ipkg
+./build/exec/floe-test
+```
+
+## Project Structure
+
+```
+floe/
+├── floe.ipkg              # Main compiler package
+├── floe-test.ipkg         # Test package
+├── src/
+│   ├── Floe/
+│   │   ├── Main.idr       # CLI entry point
+│   │   ├── Parser.idr     # DSL parser
+│   │   ├── Surface.idr    # Surface AST (untyped)
+│   │   ├── Core.idr       # Typed IR with proofs
+│   │   ├── Elaborate.idr  # Surface -> Core elaboration
+│   │   ├── Codegen.idr    # Core -> Python/Polars
+│   │   ├── Error.idr      # Error types with source spans
+│   │   ├── Types.idr      # Shared type definitions
+│   │   └── Syntax.md      # DSL syntax reference
+│   └── Test/
+│       ├── Main.idr       # Test runner entry point
+│       ├── Parser.idr     # Parser tests
+│       ├── Elaborate.idr  # Elaboration tests
+│       ├── Codegen.idr    # Code generation tests
+│       ├── Assert.idr     # Test assertions
+│       └── Runner.idr     # Test framework
+├── examples/
+│   ├── authorship.floe    # Full example with schemas, transforms, main
+│   ├── example.floe       # Basic example
+│   └── example_join.floe  # Join operations example
+└── Makefile
+```
 
 ## Architecture
 
 ```
-DSL source → Parser → Surface AST → Elaboration → Typed IR → Rust Codegen
-                                         ↓
-                                   (errors with source locations)
+.floe source → Parser → Surface AST → Elaboration → Typed IR → Python Codegen
+                                           ↓
+                                     (errors with source locations)
 ```
 
-## Key Insight
+The Typed IR uses dependent types to encode schema correctness. When elaboration succeeds, Idris has *proven* the pipeline is valid.
 
-The compiler is written in Idris. The Typed IR uses dependent types to encode schema correctness. When elaboration succeeds, Idris has *proven* the pipeline is valid. This proof happens at your compiler's compile time, but applies to user pipelines processed at runtime.
+## DSL Syntax
 
-## Three Representations
+```floe
+-- Constants and external functions
+let openalex = "https://openalex.org/"
+fn strip_prefix :: String -> String
 
-### 1. Surface AST (`SExpr`, `SStep`)
-
-Untyped, strings everywhere. What the parser produces.
-
-```idris
-data SExpr
-  = SCol SrcSpan String        -- .work_id
-  | SHash SrcSpan (List SExpr) -- hash [.a, .b]
-  | ...
-
-data SStep
-  = SRename SrcSpan String String  -- rename .old .new
-  | SDrop SrcSpan (List String)    -- drop [.a, .b]
-  | ...
-```
-
-Carries `SrcSpan` for error reporting.
-
-### 2. Typed IR (`Expr`, `Step`, `Pipeline`)
-
-Schema-indexed. Column references carry proofs.
-
-```idris
-data Expr : Schema -> Ty -> Type where
-  Col : (nm : String) -> HasCol s nm t -> Expr s t
-  ...
-
-data Step : Schema -> Schema -> Type where
-  TRename : (old : String) -> (new : String) 
-          -> HasCol sIn old t
-          -> Step sIn (RenameField old new sIn)
-  ...
-
-data Pipeline : Schema -> Schema -> Type where
-  Done : Pipeline s s
-  Then : Step a b -> Pipeline b c -> Pipeline a c
-```
-
-You cannot construct `Pipeline A B` unless the steps actually transform A to B.
-
-### 3. Rust/Polars Output
-
-Generated from the Typed IR. Since the IR is proven correct, codegen is straightforward - no validation needed.
-
-## The Proof Mechanism
-
-### `HasCol` - Proof a field exists
-
-```idris
-data HasCol : (s : Schema) -> (nm : String) -> (t : Ty) -> Type where
-  Here  : HasCol (MkField nm t :: rest) nm t
-  There : HasCol rest nm t -> HasCol (f :: rest) nm t
-```
-
-A value of type `HasCol s "work_id" TStr` is *evidence* that the schema `s` contains a string field named "work_id".
-
-### `hasField` - Decidable lookup
-
-```idris
-hasField : (s : Schema) -> (nm : String) -> Dec (t : Ty ** HasCol s nm t)
-```
-
-At runtime, looks up a field by name. Returns `Yes (t ** proof)` if found, `No` otherwise. Idris has verified this function only returns `Yes` when the proof is valid.
-
-### Elaboration
-
-```idris
-elabExpr : (s : Schema) -> SExpr -> CompilerM (t : Ty ** Expr s t)
-elabExpr s (SCol sp nm) =
-  case hasField s nm of
-    Yes (t ** pf) => Right (t ** Col nm pf)
-    No _ => fail sp "Unknown column '\{nm}'"
-```
-
-If `hasField` returns a proof, we use it to construct the typed expression. If not, we produce a nice error with source location.
-
-## What the Dependent Types Guarantee
-
-1. **If elaboration succeeds**, the pipeline is valid
-2. **Schema transformations compose correctly** - Each step's output matches the next step's input
-3. **Column references are valid** - Every `.field` reference exists in the schema at that point
-4. **The output schema is accurate** - The claimed output type matches reality
-
-Bugs in elaboration logic are caught when *compiling the compiler*, not when users run pipelines.
-
-## Error Messages
-
-Errors are produced during elaboration, not by Idris's type checker. This gives full control over formatting:
-
-```
-<test>:1:1: error: Cannot drop: column 'work_id' not found
-```
-
-The elaborator knows context (what was renamed, what exists) and can produce helpful messages like "did you mean 'publication_id'?"
-
-## Files
-
-- `Compiler.idr` - Main compiler prototype with Surface AST, Typed IR, and elaboration
-- `Pipeline.idr` - Earlier experiments with the IR design
-
-## DSL Syntax (Target)
-
-```
+-- Schema definitions
 schema WorksAuthorship {
     work_id: String,
     author_id: String,
@@ -131,17 +77,71 @@ schema Authorship {
     affiliated_organization_id: String,
 }
 
-let pipeline :: WorksAuthorship -> Authorship
-let pipeline =
-    map { publication_id: .work_id, ... }
-    >> drop [.work_id]
-    >> transform [.publication_id] strip_oa_prefix
+-- Pipeline functions with type signatures
+fn transform :: WorksAuthorship -> Authorship
+fn transform =
+    rename work_id publication_id >>
+    rename institution_id affiliated_organization_id >>
+    map { ..., publication_id: strip_prefix .publication_id }
+
+-- Entry point
+fn main input output =
+    read input as WorksAuthorship
+    |> transform
+    write output
 ```
+
+### Operations
+
+- `rename old new` - rename a column
+- `drop [col1, col2]` - remove columns  
+- `select [col1, col2]` - keep only these columns
+- `require [col1, col2]` - filter nulls, refine `Maybe T -> T`
+- `filter col` - filter on boolean column
+- `map { field: expr, ... }` - project/transform columns (`...` spreads remaining)
+- `transform [cols] fn` - apply function to columns
+- `unique_by .col` - deduplicate by column
+- `join other on .left_col == .right_col` - join tables
+
+### Types
+
+`Int64`, `Float`, `String`, `Bool`, `List T`, `Maybe T`
+
+## The Proof Mechanism
+
+### `HasCol` - Proof a field exists
+
+```idris
+data HasCol : Schema -> String -> Ty -> Type where
+  Here  : HasCol (MkField nm t :: rest) nm t
+  There : HasCol rest nm t -> HasCol (f :: rest) nm t
+```
+
+A value of type `HasCol s "work_id" TStr` is *evidence* that schema `s` contains a string field "work_id".
+
+### Elaboration
+
+```idris
+elabExpr : (s : Schema) -> SExpr -> CompilerM (t : Ty ** Expr s t)
+elabExpr s (SCol sp nm) =
+  case hasField s nm of
+    Yes (t ** pf) => Right (t ** Col nm pf)
+    No _ => fail sp "Unknown column '\{nm}'"
+```
+
+If `hasField` returns a proof, we construct the typed expression. Otherwise, we produce an error with source location.
+
+## What the Dependent Types Guarantee
+
+1. **If elaboration succeeds**, the pipeline is valid
+2. **Schema transformations compose correctly** - each step's output matches the next step's input
+3. **Column references are valid** - every `.field` reference exists in the schema at that point
+4. **The output schema is accurate** - the claimed output type matches reality
+
+Bugs in elaboration logic are caught when *compiling the compiler*, not when users run pipelines.
 
 ## TODO
 
-- [ ] Parser for DSL syntax
-- [ ] `map { field: expr, ... }` with spread operator
-- [ ] Join operations with multi-schema tracking
-- [ ] Rust/Polars code generation
-- [ ] Better error messages with suggestions
+- [ ] Better error messages with suggestions ("did you mean...?")
+- [ ] Multi-table join tracking
+- [ ] Rust/Polars codegen backend (currently Python)

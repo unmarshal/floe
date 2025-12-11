@@ -1,0 +1,66 @@
+-- Generates authorship nodes and edge parquet files
+-- Simplified version of arrowlake/examples/authorship.al
+
+-- Constant for OpenAlex URL prefix
+let openalex = "https://openalex.org/"
+
+-- Function to strip OpenAlex URL prefix and normalize
+fn stripOaPrefix :: String -> String
+fn stripOaPrefix = stripPrefix openalex
+
+schema WorksAuthorship {
+    work_id: String,
+    author_id: String,
+    institution_id: String,
+    author_position: String,
+    is_corresponding: Bool,
+}
+
+schema Authorship {
+    publication_id: String,
+    author_id: String,
+    affiliated_organization_id: String,
+    author_position: String,
+}
+
+schema AuthorshipNode {
+    id: String,
+    author_position: String,
+}
+
+schema Edge {
+    source_id: String,
+    target_id: String,
+}
+
+-- Initial transforms: rename fields, drop unused, and strip prefixes
+fn initialTransforms :: WorksAuthorship -> Authorship
+fn initialTransforms =
+    rename work_id publication_id >>
+    rename institution_id affiliated_organization_id >>
+    drop [is_corresponding] >>
+    transform [publication_id, author_id, affiliated_organization_id] stripOaPrefix
+
+-- Extract authorship nodes with hashed ID from publication_id + author_id
+-- Deduplicate by the generated ID
+fn authorshipNodes :: Authorship -> AuthorshipNode
+fn authorshipNodes =
+    map { id: hash [.publication_id, .author_id], author_position: .author_position }
+    >> uniqueBy .id
+
+-- Extract CONTRIBUTOR_TO edges (author -> publication)
+fn contributorTo :: Authorship -> Edge
+fn contributorTo =
+    map { source_id: .author_id, target_id: .publication_id }
+
+-- Extract AFFILIATED_WITH edges (publication -> organization)
+fn affiliatedWith :: Authorship -> Edge
+fn affiliatedWith =
+    map { source_id: .publication_id, target_id: .affiliated_organization_id }
+
+-- Entry point with CLI args
+fn main input output =
+    read input as WorksAuthorship
+    |> initialTransforms
+    |> authorshipNodes
+    write output

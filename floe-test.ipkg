@@ -1,0 +1,22 @@
+package floe-test
+
+depends = contrib
+
+sourcedir = "src"
+
+modules = Floe.Types
+        , Floe.Surface
+        , Floe.Core
+        , Floe.Error
+        , Floe.Elaborate
+        , Floe.Codegen
+        , Floe.Parser
+        , Test.Assert
+        , Test.Runner
+        , Test.Parser
+        , Test.Elaborate
+        , Test.Codegen
+        , Test.Main
+
+main = Test.Main
+executable = floe-test

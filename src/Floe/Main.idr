@@ -9,112 +9,119 @@ import Floe.Error
 import Floe.Elaborate
 import Floe.Codegen
 import Floe.Parser
+import System.File
+import System
 
 -----------------------------------------------------------
--- Test Schemas (built using parser helpers)
+-- Compile a .floe file to Python
 -----------------------------------------------------------
 
-WorksAuthorshipDef : SSchema
-WorksAuthorshipDef = schema 1 "WorksAuthorship"
-  [ ("work_id", SString)
-  , ("author_id", SString)
-  , ("institution_id", SString)
-  , ("author_position", SString)
-  , ("is_corresponding", SBool)
-  ]
+compileFile : String -> IO ()
+compileFile filename = do
+  Right src <- readFile filename
+    | Left err => do
+        putStrLn $ "Error: Could not read file '" ++ filename ++ "'"
+        exitWith (ExitFailure 1)
+  case parseFloe src of
+    Left e => do
+      putStrLn $ show e
+      exitWith (ExitFailure 1)
+    Right prog => do
+      case elabProgram prog of
+        Left e => do
+          putStrLn $ show e
+          exitWith (ExitFailure 1)
+        Right ctx => do
+          -- Output Python code
+          putStrLn "import polars as pl"
+          putStrLn ""
 
-AuthorshipDef : SSchema
-AuthorshipDef = schema 10 "Authorship"
-  [ ("publication_id", SString)
-  , ("author_id", SString)
-  , ("affiliated_organization_id", SString)
-  ]
+          -- Get constants and function definitions for codegen
+          let consts = getConsts prog
+          let fnDefs = getFnDefs prog
+          let typeSigs = getTypeSigs prog
 
-NullableDef : SSchema
-NullableDef = schema 20 "NullableData"
-  [ ("id", SInt64)
-  , ("source_id", SMaybe SString)
-  , ("target_id", SMaybe SString)
-  ]
+          -- Generate global table bindings
+          for_ (getTableBinds prog) $ \t => do
+            putStrLn $ t.name ++ " = pl.read_parquet(\"" ++ t.file ++ "\")"
+          when (not (null (getTableBinds prog))) $ putStrLn ""
 
------------------------------------------------------------
--- Test Transforms
------------------------------------------------------------
+          -- Generate code for let bindings (pipeline functions)
+          for_ (getLetBinds prog) $ \b => do
+            case elabLetBind ctx typeSigs b of
+              Left e => do
+                putStrLn $ "# Error in fn " ++ b.name
+                putStrLn $ "# " ++ show e
+              Right (sIn ** sOut ** pipeline) => do
+                -- Find the type signature for nice names
+                let (inName, outName) = case findSig b.name typeSigs of
+                      Nothing => ("Unknown", "Unknown")
+                      Just sig => (sig.inTy, sig.outTy)
+                putStrLn $ "def " ++ b.name ++ "(df: pl.DataFrame) -> pl.DataFrame:"
+                putStrLn $ "    \"\"\"" ++ inName ++ " -> " ++ outName ++ "\"\"\""
+                putStrLn $ "    return " ++ toPolarsWithConstsAndFns consts fnDefs pipeline "df"
+                putStrLn ""
 
--- Valid: rename + drop
-ValidTransform : STransform
-ValidTransform = transform 30 "WorksAuthorship" "Authorship"
-  [ rename 31 "work_id" "publication_id"
-  , rename 32 "institution_id" "affiliated_organization_id"
-  , drop 33 ["author_position", "is_corresponding"]
-  ]
+          -- Generate code for legacy transforms
+          for_ (getTransforms prog) $ \t => do
+            case elabTransformDef ctx t of
+              Left e => do
+                putStrLn $ "# Error in " ++ t.inputSchema ++ " -> " ++ t.outputSchema
+                putStrLn $ "# " ++ show e
+              Right (sIn ** sOut ** pipeline) => do
+                let fnName = "transform_" ++ t.inputSchema ++ "_to_" ++ t.outputSchema
+                putStrLn $ "def " ++ fnName ++ "(df: pl.DataFrame) -> pl.DataFrame:"
+                putStrLn $ "    \"\"\"Transform " ++ t.inputSchema ++ " to " ++ t.outputSchema ++ "\"\"\""
+                putStrLn $ "    return " ++ toPolarsWithConstsAndFns consts fnDefs pipeline "df"
+                putStrLn ""
 
--- Valid: require (filter nulls)
-RequireTransform : STransform
-RequireTransform = transform 40 "NullableData" "CleanData"
-  [ require 41 ["source_id", "target_id"]
-  ]
+          -- Generate main block if present
+          case getMain prog of
+            Nothing => pure ()
+            Just m => do
+              putStrLn "if __name__ == \"__main__\":"
+              -- Generate argv parsing if there are params
+              case m.params of
+                [] => pure ()
+                ps => do
+                  putStrLn "    import sys"
+                  generateArgParsing 1 ps
+              -- Generate main body
+              generateMainBody consts m.params m.body
+  where
+    findSig : String -> List STypeSig -> Maybe STypeSig
+    findSig _ [] = Nothing
+    findSig nm (s :: rest) = if s.name == nm then Just s else findSig nm rest
 
--- Valid: filter on boolean
-FilterTransform : STransform
-FilterTransform = transform 50 "WorksAuthorship" "Corresponding"
-  [ filter 51 "is_corresponding"
-  ]
+    generateArgParsing : Nat -> List String -> IO ()
+    generateArgParsing _ [] = pure ()
+    generateArgParsing n (p :: ps) = do
+      putStrLn $ "    " ++ p ++ " = sys.argv[" ++ show n ++ "]"
+      generateArgParsing (S n) ps
 
--- Invalid: column doesn't exist
-BadColumnTransform : STransform
-BadColumnTransform = transform 60 "WorksAuthorship" "Bad"
-  [ rename 61 "nonexistent" "something"
-  ]
+    -- Resolve a file arg: if it matches a param name, use the variable, otherwise quote it
+    resolveFileArg : List String -> String -> String
+    resolveFileArg params arg =
+      if arg `elem` params
+        then arg  -- it's a param variable
+        else "\"" ++ arg ++ "\""  -- it's a literal
 
--- Invalid: rename to existing column
-RenameCollisionTransform : STransform
-RenameCollisionTransform = transform 70 "WorksAuthorship" "Bad"
-  [ rename 71 "work_id" "author_id"  -- author_id already exists!
-  ]
-
--- Invalid: reference column after rename
-UseAfterRenameTransform : STransform
-UseAfterRenameTransform = transform 80 "WorksAuthorship" "Bad"
-  [ rename 81 "work_id" "publication_id"
-  , rename 82 "work_id" "something"  -- work_id no longer exists!
-  ]
-
--- Invalid: filter on non-boolean
-FilterNonBoolTransform : STransform
-FilterNonBoolTransform = transform 90 "WorksAuthorship" "Bad"
-  [ filter 91 "work_id"  -- work_id is String, not Bool
-  ]
-
--- Invalid: require on non-nullable
-RequireNonNullableTransform : STransform
-RequireNonNullableTransform = transform 100 "WorksAuthorship" "Bad"
-  [ require 101 ["work_id"]  -- work_id is String, not Maybe
-  ]
-
------------------------------------------------------------
--- Run Tests
------------------------------------------------------------
-
-runTest : String -> SProgram -> IO ()
-runTest name prog = do
-  putStrLn $ "--- " ++ name ++ " ---"
-  case elabProgram prog of
-    Left e => putStrLn $ "ERROR: " ++ show e
-    Right ctx => putStrLn "OK: Program elaborated successfully"
-  putStrLn ""
-
--- Test a transform and show generated code if valid
-testTransform : String -> Context -> STransform -> IO ()
-testTransform name ctx t = do
-  putStrLn $ "--- " ++ name ++ " ---"
-  case elabTransform ctx t of
-    Left e => putStrLn $ "ERROR: " ++ show e
-    Right (sIn ** sOut ** pipeline) => do
-      putStrLn $ "Input:  " ++ showSchema sIn
-      putStrLn $ "Output: " ++ showSchema sOut
-      putStrLn $ "Code:   " ++ toPolars pipeline "df"
-  putStrLn ""
+    generateMainBody : List (String, String) -> List String -> List SMainStep -> IO ()
+    generateMainBody consts params steps = go "df" steps
+      where
+        go : String -> List SMainStep -> IO ()
+        go _ [] = pure ()
+        go dfVar (SRead _ file schema :: rest) = do
+          let fileExpr = resolveFileArg params file
+          putStrLn $ "    df = pl.read_parquet(" ++ fileExpr ++ ")"
+          go "df" rest
+        go dfVar (SPipeThrough _ fnName :: rest) = do
+          putStrLn $ "    df = " ++ fnName ++ "(df)"
+          go "df" rest
+        go dfVar (SWrite _ file :: rest) = do
+          let fileExpr = resolveFileArg params file
+          putStrLn $ "    df.write_parquet(" ++ fileExpr ++ ")"
+          go dfVar rest
 
 -----------------------------------------------------------
 -- Main
@@ -122,30 +129,9 @@ testTransform name ctx t = do
 
 main : IO ()
 main = do
-  putStrLn "=========================================="
-  putStrLn "         Floe Compiler Tests"
-  putStrLn "==========================================\n"
-
-  -- Build context with schemas
-  let prog = program [WorksAuthorshipDef, AuthorshipDef, NullableDef] []
-
-  case elabProgram prog of
-    Left e => putStrLn $ "Failed to load schemas: " ++ show e
-    Right ctx => do
-      putStrLn "Schemas loaded successfully.\n"
-
-      -- Valid transforms
-      putStrLn "=== VALID TRANSFORMS ===\n"
-      testTransform "Rename + Drop" ctx ValidTransform
-      testTransform "Require (filter nulls)" ctx RequireTransform
-      testTransform "Filter (boolean)" ctx FilterTransform
-
-      -- Invalid transforms
-      putStrLn "=== INVALID TRANSFORMS (should error) ===\n"
-      testTransform "Column not found" ctx BadColumnTransform
-      testTransform "Rename collision" ctx RenameCollisionTransform
-      testTransform "Use after rename" ctx UseAfterRenameTransform
-      testTransform "Filter non-boolean" ctx FilterNonBoolTransform
-      testTransform "Require non-nullable" ctx RequireNonNullableTransform
-
-  putStrLn "==========================================\n"
+  args <- getArgs
+  case args of
+    [_, filename] => compileFile filename
+    _ => do
+      putStrLn "Usage: floe <file.floe>"
+      exitWith (ExitFailure 1)
