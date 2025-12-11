@@ -162,6 +162,49 @@ builtinToPolarsWithConsts _ (BCast ty) = ".cast(pl." ++ styToPolars ty ++ ")"
 builtinToPolars : BuiltinCall -> String
 builtinToPolars = builtinToPolarsWithConsts []
 
+-----------------------------------------------------------
+-- Typed Builtin Chain Codegen
+-----------------------------------------------------------
+
+-- Generate Polars code from a typed builtin call
+tBuiltinToPolarsWithConsts : List (String, ConstValue) -> TBuiltinCall inTy outTy -> String
+tBuiltinToPolarsWithConsts consts (TStripPrefix arg) =
+  ".str.strip_prefix(\"" ++ resolveArg consts arg ++ "\")"
+tBuiltinToPolarsWithConsts consts (TStripSuffix arg) =
+  ".str.strip_suffix(\"" ++ resolveArg consts arg ++ "\")"
+tBuiltinToPolarsWithConsts consts (TReplace old new) =
+  ".str.replace(\"" ++ resolveArg consts old ++ "\", \"" ++ resolveArg consts new ++ "\")"
+tBuiltinToPolarsWithConsts _ TToLowercase = ".str.to_lowercase()"
+tBuiltinToPolarsWithConsts _ TToUppercase = ".str.to_uppercase()"
+tBuiltinToPolarsWithConsts _ TTrim = ".str.strip_chars()"
+tBuiltinToPolarsWithConsts _ TLenChars = ".str.len_chars()"
+tBuiltinToPolarsWithConsts consts (TFillNull arg) =
+  ".fill_null(" ++ resolveArgWithType consts arg ++ ")"
+tBuiltinToPolarsWithConsts _ (TCast target) = ".cast(pl." ++ tyToPolars target ++ ")"
+  where
+    tyToPolars : Ty -> String
+    tyToPolars TInt8 = "Int8"
+    tyToPolars TInt16 = "Int16"
+    tyToPolars TInt32 = "Int32"
+    tyToPolars TInt64 = "Int64"
+    tyToPolars TUInt8 = "UInt8"
+    tyToPolars TUInt16 = "UInt16"
+    tyToPolars TUInt32 = "UInt32"
+    tyToPolars TUInt64 = "UInt64"
+    tyToPolars TFloat32 = "Float32"
+    tyToPolars TFloat64 = "Float64"
+    tyToPolars TString = "Utf8"
+    tyToPolars TBool = "Boolean"
+    tyToPolars (TDecimal p s) = "Decimal(precision=" ++ show p ++ ", scale=" ++ show s ++ ")"
+    tyToPolars (TList inner) = "List(" ++ tyToPolars inner ++ ")"
+    tyToPolars (TMaybe inner) = tyToPolars inner  -- Polars handles nullability separately
+
+-- Generate chained method calls from a typed builtin chain
+tChainToPolarsWithConsts : List (String, ConstValue) -> TBuiltinChain inTy outTy -> String -> String
+tChainToPolarsWithConsts consts TCNil colExpr = colExpr
+tChainToPolarsWithConsts consts (TCCons builtin rest) colExpr =
+  tChainToPolarsWithConsts consts rest (colExpr ++ tBuiltinToPolarsWithConsts consts builtin)
+
 -- Generate chained method calls for a function definition
 public export
 fnDefToPolarsWithConsts : List (String, ConstValue) -> SFnDef -> String -> String
@@ -370,8 +413,8 @@ toPolarsWithConstsAndFns consts fnDefs (Filter expr rest) df =
   toPolarsWithConstsAndFns consts fnDefs rest (df ++ ".filter(" ++ filterExprToPolars expr ++ ")")
 toPolarsWithConstsAndFns consts fnDefs (MapFields assigns spreadCols rest) df =
   toPolarsWithConstsAndFns consts fnDefs rest (mapToPolarsWithContext consts fnDefs assigns spreadCols df)
-toPolarsWithConstsAndFns consts fnDefs (Transform cols fn _ _ _ rest) df =
-  let exprs = joinWith ", " (map (transformColWithFnAndConsts consts fnDefs fn) cols)
+toPolarsWithConstsAndFns consts fnDefs (Transform cols chain _ _ _ rest) df =
+  let exprs = joinWith ", " (map (\col => tChainToPolarsWithConsts consts chain ("pl.col(\"" ++ col ++ "\")")) cols)
   in toPolarsWithConstsAndFns consts fnDefs rest (df ++ ".with_columns(" ++ exprs ++ ")")
 toPolarsWithConstsAndFns consts fnDefs (UniqueBy col _ rest) df =
   toPolarsWithConstsAndFns consts fnDefs rest (df ++ ".unique(subset=[\"" ++ col ++ "\"])")

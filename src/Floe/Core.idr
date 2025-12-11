@@ -79,6 +79,38 @@ data FilterExpr : Schema -> Type where
   FOr : FilterExpr s -> FilterExpr s -> FilterExpr s
 
 -----------------------------------------------------------
+-- Typed Builtin Calls (type-indexed transformations)
+-----------------------------------------------------------
+
+-- A single builtin operation with input and output types
+public export
+data TBuiltinCall : Ty -> Ty -> Type where
+  -- String operations (String -> String)
+  TStripPrefix : BuiltinArg -> TBuiltinCall TString TString
+  TStripSuffix : BuiltinArg -> TBuiltinCall TString TString
+  TToLowercase : TBuiltinCall TString TString
+  TToUppercase : TBuiltinCall TString TString
+  TTrim : TBuiltinCall TString TString
+  TReplace : BuiltinArg -> BuiltinArg -> TBuiltinCall TString TString
+
+  -- String to numeric (String -> Int64)
+  TLenChars : TBuiltinCall TString TInt64
+
+  -- FillNull unwraps Maybe (Maybe t -> t)
+  TFillNull : BuiltinArg -> TBuiltinCall (TMaybe t) t
+
+  -- Cast can convert between any types
+  TCast : (target : Ty) -> TBuiltinCall source target
+
+-- A chain of builtin operations that composes types
+public export
+data TBuiltinChain : Ty -> Ty -> Type where
+  -- Empty chain (identity)
+  TCNil : TBuiltinChain t t
+  -- Cons a builtin onto a chain (types must compose)
+  TCCons : TBuiltinCall t1 t2 -> TBuiltinChain t2 t3 -> TBuiltinChain t1 t3
+
+-----------------------------------------------------------
 -- Map Value Expressions (schema-indexed, typed)
 -----------------------------------------------------------
 
@@ -317,8 +349,9 @@ data Pipeline : Schema -> Schema -> Type where
   -- Transform: apply a function to specified columns
   -- Proof that all columns have the expected input type
   -- Output schema has transformed columns updated to fnOutTy
+  -- The typed builtin chain is now embedded directly (not just function name)
   Transform : (cols : List String)
-            -> (fn : String)
+            -> (chain : TBuiltinChain fnInTy fnOutTy)
             -> (fnInTy : Ty)
             -> (fnOutTy : Ty)
             -> (0 prf : AllHasColTy sIn cols fnInTy)

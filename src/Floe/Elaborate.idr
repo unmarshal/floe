@@ -16,12 +16,17 @@ import Decidable.Equality
 -- Elaboration Context
 -----------------------------------------------------------
 
+-- Scalar function with typed builtin chain
+public export
+data ScalarFn : Type where
+  MkScalarFn : (inTy : Ty) -> (outTy : Ty) -> TBuiltinChain inTy outTy -> ScalarFn
+
 public export
 record Context where
   constructor MkCtx
   schemas : List (String, Schema)  -- named schemas
   tables : List (String, String, Schema)  -- table bindings: (name, file, schema)
-  scalarFns : List (String, Ty, Ty)  -- scalar functions: (name, inTy, outTy)
+  scalarFns : List (String, ScalarFn)  -- scalar functions with typed chains
   constants : List (String, ConstValue)  -- typed constants
 
 public export
@@ -49,16 +54,12 @@ lookupTable nm ctx = go ctx.tables
     go ((n, f, s) :: rest) = if n == nm then Just (f, s) else go rest
 
 public export
-addScalarFn : String -> Ty -> Ty -> Context -> Context
-addScalarFn nm inTy outTy ctx = { scalarFns := (nm, inTy, outTy) :: ctx.scalarFns } ctx
+addScalarFn : String -> (inTy : Ty) -> (outTy : Ty) -> TBuiltinChain inTy outTy -> Context -> Context
+addScalarFn nm inTy outTy chain ctx = { scalarFns := (nm, MkScalarFn inTy outTy chain) :: ctx.scalarFns } ctx
 
 public export
-lookupScalarFn : String -> Context -> Maybe (Ty, Ty)
-lookupScalarFn nm ctx = go ctx.scalarFns
-  where
-    go : List (String, Ty, Ty) -> Maybe (Ty, Ty)
-    go [] = Nothing
-    go ((n, i, o) :: rest) = if n == nm then Just (i, o) else go rest
+lookupScalarFn : String -> Context -> Maybe ScalarFn
+lookupScalarFn nm ctx = lookup nm ctx.scalarFns
 
 public export
 addConstant : String -> ConstValue -> Context -> Context
@@ -315,29 +316,46 @@ validateFillNullArg (BArgFloat _) TFloat64 = Right ()
 validateFillNullArg (BArgBool _) TBool = Right ()
 validateFillNullArg arg expectedTy = Left ("fillNull argument type mismatch: expected " ++ show expectedTy ++ ", got " ++ show arg)
 
--- Validate a builtin chain against input/output types
-validateBuiltinChain : List BuiltinCall -> Ty -> Ty -> Either String ()
-validateBuiltinChain [] inTy outTy =
-  if inTy == outTy
-    then Right ()
-    else Left ("Type mismatch: input " ++ show inTy ++ " does not match output " ++ show outTy)
-validateBuiltinChain (builtin :: rest) inTy outTy = do
-  -- Special validation for fillNull
-  case builtin of
-    BFillNull arg => do
-      -- fillNull requires Maybe T input
-      case inTy of
-        TMaybe innerTy => do
-          -- Validate argument matches inner type
-          validateFillNullArg arg innerTy
-          -- Continue with unwrapped type
-          let nextTy = builtinOutputTy builtin inTy
-          validateBuiltinChain rest nextTy outTy
-        _ => Left ("fillNull requires Maybe type, got " ++ show inTy)
-    _ => do
-      -- Other builtins: compute output and continue
-      let nextTy = builtinOutputTy builtin inTy
-      validateBuiltinChain rest nextTy outTy
+-- Elaborate a single untyped builtin to a typed builtin
+-- Returns the output type and the typed builtin
+elabBuiltin : Span -> BuiltinCall -> (inTy : Ty) -> Result (outTy : Ty ** TBuiltinCall inTy outTy)
+elabBuiltin span (BStripPrefix arg) TString = ok (TString ** TStripPrefix arg)
+elabBuiltin span (BStripSuffix arg) TString = ok (TString ** TStripSuffix arg)
+elabBuiltin span BToLowercase TString = ok (TString ** TToLowercase)
+elabBuiltin span BToUppercase TString = ok (TString ** TToUppercase)
+elabBuiltin span BTrim TString = ok (TString ** TTrim)
+elabBuiltin span (BReplace old new) TString = ok (TString ** TReplace old new)
+elabBuiltin span BLenChars TString = ok (TInt64 ** TLenChars)
+elabBuiltin span (BFillNull arg) (TMaybe innerTy) = do
+  -- Validate that the argument matches the inner type
+  case validateFillNullArg arg innerTy of
+    Right () => ok (innerTy ** TFillNull arg)
+    Left errMsg => err (ParseError span errMsg)
+elabBuiltin span (BCast target) inTy = ok (toCoreTy target ** TCast (toCoreTy target))
+-- Error cases
+elabBuiltin span (BStripPrefix _) t = err (ParseError span ("stripPrefix requires String input, got " ++ show t))
+elabBuiltin span (BStripSuffix _) t = err (ParseError span ("stripSuffix requires String input, got " ++ show t))
+elabBuiltin span BToLowercase t = err (ParseError span ("toLowercase requires String input, got " ++ show t))
+elabBuiltin span BToUppercase t = err (ParseError span ("toUppercase requires String input, got " ++ show t))
+elabBuiltin span BTrim t = err (ParseError span ("trim requires String input, got " ++ show t))
+elabBuiltin span (BReplace _ _) t = err (ParseError span ("replace requires String input, got " ++ show t))
+elabBuiltin span BLenChars t = err (ParseError span ("lenChars requires String input, got " ++ show t))
+elabBuiltin span (BFillNull _) t = err (ParseError span ("fillNull requires Maybe type, got " ++ show t))
+
+-- Elaborate an untyped builtin chain to a typed chain
+-- Ensures that input type flows to output type correctly
+elabBuiltinChain : Span -> List BuiltinCall -> (inTy : Ty) -> (expectedOut : Ty) -> Result (TBuiltinChain inTy expectedOut)
+elabBuiltinChain span [] inTy expectedOut =
+  case decEq inTy expectedOut of
+    Yes Refl => ok TCNil
+    No _ => err (ParseError span ("Type mismatch in builtin chain: expected " ++ show expectedOut ++ ", got " ++ show inTy))
+elabBuiltinChain span (b :: rest) inTy expectedOut = do
+  -- Elaborate the first builtin
+  (midTy ** typedBuiltin) <- elabBuiltin span b inTy
+  -- Elaborate the rest of the chain
+  typedRest <- elabBuiltinChain span rest midTy expectedOut
+  -- Compose them
+  ok (TCCons typedBuiltin typedRest)
 
 -- Check if type is nullable (needed for inferExprTy)
 isNullableTy : Ty -> Bool
@@ -845,12 +863,12 @@ elabOp ctx sIn (SMap span fields) = do
 
 -- Transform: apply function to columns
 elabOp ctx sIn (STransform span cols fn) = do
-  (fnInTy, fnOutTy) <- case lookupScalarFn fn ctx of
+  MkScalarFn fnInTy fnOutTy chain <- case lookupScalarFn fn ctx of
     Nothing => err (ParseError span ("Unknown function '" ++ fn ++ "'"))
-    Just types => ok types
+    Just scalarFn => ok scalarFn
   prf <- ensureAllColsTy span sIn cols fnInTy
   -- Compute output schema by updating transformed column types
-  ok (updateColTypes sIn cols fnOutTy ** Transform cols fn fnInTy fnOutTy prf Done)
+  ok (updateColTypes sIn cols fnOutTy ** Transform cols chain fnInTy fnOutTy prf Done)
 
 -- UniqueBy: deduplicate based on a column
 elabOp ctx sIn (SUniqueBy span expr) =
@@ -892,7 +910,7 @@ chain (Select names prf rest) p2 = Select names prf (chain rest p2)
 chain (Require names prf rest) p2 = Require names prf (chain rest p2)
 chain (Filter expr rest) p2 = Filter expr (chain rest p2)
 chain (MapFields assigns spreadCols rest) p2 = MapFields assigns spreadCols (chain rest p2)
-chain (Transform cols fn fnInTy fnOutTy prf rest) p2 = Transform cols fn fnInTy fnOutTy prf (chain rest p2)
+chain (Transform cols ch fnInTy fnOutTy prf rest) p2 = Transform cols ch fnInTy fnOutTy prf (chain rest p2)
 chain (UniqueBy col prf rest) p2 = UniqueBy col prf (chain rest p2)
 chain (Join tbl sRight lCol rCol prfL prfR rest) p2 = Join tbl sRight lCol rCol prfL prfR (chain rest p2)
 
@@ -1030,12 +1048,11 @@ validateMain ctx (Just m) = go m.body
 
 -- Register scalar function types (e.g., fn strip_prefix :: String -> String)
 -- Skips pipeline type sigs (schema -> schema)
+-- OLD: Legacy syntax for scalar function type signatures without implementations
+-- Now scalar functions must have implementations (builtin chains) to be registered
+-- This is a no-op - actual registration happens in elabBindings
 elabScalarFnSigs : Context -> List STypeSig -> Context
-elabScalarFnSigs ctx [] = ctx
-elabScalarFnSigs ctx (sig :: rest) =
-  case (parseScalarTy sig.inTy, parseScalarTy sig.outTy) of
-    (Just inT, Just outT) => elabScalarFnSigs (addScalarFn sig.name inT outT ctx) rest
-    _ => elabScalarFnSigs ctx rest  -- Skip pipeline type sigs
+elabScalarFnSigs ctx _ = ctx  -- Skip legacy type signatures, require implementations
 
 -----------------------------------------------------------
 -- Elaborate New-Style Bindings (let name : Type = value)
@@ -1051,11 +1068,11 @@ elabBindings ctx (b :: rest) =
   let ctx' = case (b.ty, b.val) of
                -- Constants: add to context
                (SBTyConst _, SBValConst v) => addConstant b.name v ctx
-               -- Column functions: validate and register as scalar functions
+               -- Column functions: elaborate to typed chain and register
                (SBTyColFn inTy outTy, SBValColFn chain) =>
-                 case validateBuiltinChain chain (toCoreTy inTy) (toCoreTy outTy) of
-                   Right () => addScalarFn b.name (toCoreTy inTy) (toCoreTy outTy) ctx
-                   Left err => ctx  -- Validation failed, skip this binding (error will be caught later)
+                 case elabBuiltinChain b.span chain (toCoreTy inTy) (toCoreTy outTy) of
+                   Right typedChain => addScalarFn b.name (toCoreTy inTy) (toCoreTy outTy) typedChain ctx
+                   Left err => ctx  -- Elaboration failed, skip this binding (error will be caught later)
                -- Pipelines don't modify context (validated separately)
                _ => ctx
   in elabBindings ctx' rest
@@ -1088,9 +1105,9 @@ validateColFnBinding : SBinding -> Result ()
 validateColFnBinding b =
   case (b.ty, b.val) of
     (SBTyColFn inTy outTy, SBValColFn chain) =>
-      case validateBuiltinChain chain (toCoreTy inTy) (toCoreTy outTy) of
-        Right () => ok ()
-        Left errMsg => Left (ParseError b.span errMsg)
+      case elabBuiltinChain b.span chain (toCoreTy inTy) (toCoreTy outTy) of
+        Right _ => ok ()  -- Elaboration succeeded, typed chain is valid
+        Left err => Left err
     _ => ok ()  -- Not a column function binding, skip
 
 -- Validate all column function bindings from new syntax
