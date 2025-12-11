@@ -63,6 +63,23 @@ idris2 --build floe.ipkg
 make test
 ```
 
+## Builtins
+
+String functions available for use in `transform` and scalar function definitions:
+
+| Floe | Polars | Description |
+|------|--------|-------------|
+| `toLowercase` | `.str.to_lowercase()` | Convert to lowercase |
+| `toUppercase` | `.str.to_uppercase()` | Convert to uppercase |
+| `trim` | `.str.strip_chars()` | Remove leading/trailing whitespace |
+| `lenChars` | `.str.len_chars()` | String length in characters |
+| `replace old new` | `.str.replace(old, new)` | Replace substring |
+| `stripPrefix p` | `.str.strip_prefix(p)` | Remove prefix if present |
+| `stripSuffix s` | `.str.strip_suffix(s)` | Remove suffix if present |
+| `cast Type` | `.cast(Type)` | Type conversion |
+
+Builtins can be chained: `trim >> toLowercase >> stripPrefix "https://"`
+
 ## Not a General-Purpose Language
 
 Floe intentionally does not support arbitrary computation. It's a DSL for columnar data transformations, not a programming language.
