@@ -87,7 +87,7 @@ compileFile filename = do
                   putStrLn "    import sys"
                   generateArgParsing 1 ps
               -- Generate main body
-              generateMainBody consts m.params m.body
+              generateMainBody ctx consts m.params m.body
   where
     findSig : String -> List STypeSig -> Maybe STypeSig
     findSig _ [] = Nothing
@@ -106,14 +106,24 @@ compileFile filename = do
         then arg  -- it's a param variable
         else "\"" ++ arg ++ "\""  -- it's a literal
 
-    generateMainBody : List (String, String) -> List String -> List SMainStep -> IO ()
-    generateMainBody consts params steps = go "df" steps
+    generateMainBody : Context -> List (String, String) -> List String -> List SMainStep -> IO ()
+    generateMainBody ctx consts params steps = go "df" steps
       where
         go : String -> List SMainStep -> IO ()
         go _ [] = pure ()
-        go dfVar (SRead _ file schema :: rest) = do
+        go dfVar (SRead _ file schemaName :: rest) = do
           let fileExpr = resolveFileArg params file
           putStrLn $ "    df = pl.read_parquet(" ++ fileExpr ++ ")"
+          -- Generate schema validation
+          case lookupSchema schemaName ctx of
+            Nothing => pure ()  -- Schema not found, skip validation
+            Just schema => do
+              putStrLn $ "    _expected_schema = " ++ schemaToPolarsDict schema
+              putStrLn $ "    for _col, _dtype in _expected_schema.items():"
+              putStrLn $ "        if _col not in df.columns:"
+              putStrLn $ "            raise ValueError(f\"Missing column: {_col}\")"
+              putStrLn $ "        if df.schema[_col] != _dtype:"
+              putStrLn $ "            raise TypeError(f\"Column '{_col}': expected {_dtype}, got {df.schema[_col]}\")"
           go "df" rest
         go dfVar (SPipeThrough _ fnName :: rest) = do
           putStrLn $ "    df = " ++ fnName ++ "(df)"

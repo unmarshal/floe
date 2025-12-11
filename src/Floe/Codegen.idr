@@ -24,6 +24,30 @@ joinWith sep [] = ""
 joinWith sep [x] = x
 joinWith sep (x :: xs) = x ++ sep ++ joinWith sep xs
 
+-----------------------------------------------------------
+-- Type to Polars dtype
+-----------------------------------------------------------
+
+-- Convert a Floe type to Polars dtype string
+public export
+tyToPolars : Ty -> String
+tyToPolars TInt64 = "pl.Int64"
+tyToPolars TFloat = "pl.Float64"
+tyToPolars (TDecimal p s) = "pl.Decimal(precision=" ++ show p ++ ", scale=" ++ show s ++ ")"
+tyToPolars TString = "pl.String"
+tyToPolars TBool = "pl.Boolean"
+tyToPolars (TList t) = "pl.List(" ++ tyToPolars t ++ ")"
+tyToPolars (TMaybe t) = tyToPolars t  -- Polars handles nullability separately
+
+-- Generate schema dict for validation
+public export
+schemaToPolarsDict : Schema -> String
+schemaToPolarsDict [] = "{}"
+schemaToPolarsDict cols = "{" ++ joinWith ", " (map colToEntry cols) ++ "}"
+  where
+    colToEntry : Col -> String
+    colToEntry (MkCol name ty) = "\"" ++ name ++ "\": " ++ tyToPolars ty
+
 -- Format column for Polars
 formatColExpr : String -> String
 formatColExpr c = "pl.col(\"" ++ c ++ "\")"

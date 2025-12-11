@@ -1,10 +1,16 @@
 # Test: Decimal type for currency calculations
 import polars as pl
 
-# Create input with Decimal columns
-_amount = pl.Series("amount", ["100.00", "49.99", "250.50"]).str.to_decimal(scale=2)
-_tax_rate = pl.Series("tax_rate", ["0.0825", "0.0750", "0.0900"]).str.to_decimal(
-    scale=4
+# Create input with Decimal columns matching the schema exactly
+_amount = (
+    pl.Series("amount", ["100.00", "49.99", "250.50"])
+    .str.to_decimal(scale=2)
+    .cast(pl.Decimal(precision=10, scale=2))
+)
+_tax_rate = (
+    pl.Series("tax_rate", ["0.0825", "0.0750", "0.0900"])
+    .str.to_decimal(scale=4)
+    .cast(pl.Decimal(precision=5, scale=4))
 )
 
 inputs = {
