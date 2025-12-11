@@ -197,20 +197,33 @@ Builtins can be chained: `trim >> toLowercase >> stripPrefix "https://"`
 | `replace` | Replace substring |
 | `stripPrefix` | Remove prefix if present |
 | `stripSuffix` | Remove suffix if present |
-| `cast Type` | Type conversion (e.g., `cast Float64 .intCol`) |
 
 ### Cast
 
-Use `cast` in map expressions to convert between types:
+Use the `as Type` postfix operator to cast expressions to different types. Works in any expression context, including arithmetic:
 
 ```haskell
-schema Input { value: Int64, }
-schema Output { asFloat: Float64, asDecimal: Decimal(10, 2), }
+schema Input { 
+    value: Int64, 
+    price: Int32, 
+    quantity: Int32, 
+    a: Int32, 
+    b: Int32,
+}
+
+schema Output { 
+    asFloat: Float64, 
+    asDecimal: Decimal(10, 2),
+    total: Int64,
+    sum: Int8,
+}
 
 let convert : Input -> Output =
     map {
-        asFloat: cast Float64 .value,
-        asDecimal: cast Decimal(10, 2) .value
+        asFloat: .value as Float64,
+        asDecimal: .value as Decimal(10, 2),
+        total: .price as Int64 * .quantity as Int64,
+        sum: (.a + .b) as Int8
     }
 ```
 
