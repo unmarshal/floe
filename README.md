@@ -65,4 +65,4 @@ make test
 
 ## Status
 
-Prototype. Currently generates Python/Polars code. See [CLAUDE.md](CLAUDE.md) for architecture details.
+Prototype. Syntax is in flux, but inspired by Elm. Currently generates Python/Polars code. See [CLAUDE.md](CLAUDE.md) for architecture details.
