@@ -9,4 +9,4 @@ repository = "https://github.com/unmarshal/floe"
 [grammars.floe]
 repository = "https://github.com/unmarshal/floe"
 commit = "eab8d8e0109514bef030c9be8ca8afacda18ec87"
-path = "tree-sitter-floe"
+path = "editors/tree-sitter-floe"
