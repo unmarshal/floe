@@ -3,7 +3,7 @@
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 FLOE="$PROJECT_ROOT/build/exec/floe"
-EXEC_DIR="$SCRIPT_DIR/exec"
+EXEC_DIR="$SCRIPT_DIR"
 
 passed=0
 failed=0
@@ -13,8 +13,8 @@ run_exec_test() {
     local name=$(basename "$dir")
 
     # Check required files exist
-    if [ ! -f "$dir/pipeline.floe" ]; then
-        echo "SKIP: $name (no pipeline.floe)"
+    if [ ! -f "$dir/Pipeline.floe" ]; then
+        echo "SKIP: $name (no Pipeline.floe)"
         return
     fi
 
