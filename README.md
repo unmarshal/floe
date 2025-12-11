@@ -63,6 +63,59 @@ idris2 --build floe.ipkg
 make test
 ```
 
+## Types
+
+Floe supports the following column types:
+
+| Type | Description |
+|------|-------------|
+| `String` | Text data |
+| `Int64` | 64-bit integers |
+| `Float` | 64-bit floating point |
+| `Bool` | Boolean values |
+| `Decimal(p, s)` | Fixed-point decimal with precision `p` and scale `s` |
+| `Maybe T` | Nullable version of type `T` |
+| `List T` | List of type `T` |
+
+### Decimal for Currency
+
+Use `Decimal` for financial data to avoid floating-point precision issues:
+
+```
+schema Invoice {
+    amount: Decimal(10, 2),      -- 10 digits total, 2 after decimal
+    tax_rate: Decimal(5, 4),     -- 5 digits total, 4 after decimal
+}
+
+fn calculateTotal :: Invoice -> InvoiceWithTotal
+fn calculateTotal =
+    map {
+        amount: .amount,
+        tax: .amount * .tax_rate,
+        total: .amount + .amount * .tax_rate
+    }
+```
+
+Decimals with different precision/scale can be mixed in arithmetic - Polars handles the conversion automatically.
+
+## Runtime Schema Validation
+
+Floe generates runtime validation to ensure input data matches declared schemas:
+
+```python
+df = pl.read_parquet("input.parquet")
+_expected_schema = {"amount": pl.Decimal(precision=10, scale=2), ...}
+for _col, _dtype in _expected_schema.items():
+    if df.schema[_col] != _dtype:
+        raise TypeError(f"Column '{_col}': expected {_dtype}, got {df.schema[_col]}")
+```
+
+This provides **two layers of type safety**:
+- **Compile time**: Proves pipeline transformations are internally consistent
+- **Runtime**: Validates external data matches declared schema
+
+If a parquet file has `Decimal(38, 2)` but you declared `Decimal(10, 2)`, you get a clear error immediately rather than silent data corruption.
+
 ## Operations
 
 ```idris
@@ -93,7 +146,12 @@ uniqueBy .id
 map { 
     new_name: .old_name,
     full_name: hash [.first, .last],
-    upper_email: toUppercase .email
+    upper_email: toUppercase .email,
+    -- Arithmetic
+    total: .price * .quantity,
+    margin: .revenue - .cost,
+    -- Conditionals
+    status: if .score > 80 then "pass" else "fail"
 }
 
 -- Join tables
