@@ -532,6 +532,28 @@ let t : A -> B = map { doubled: .amount * 2 }
        Right () => pass "elab decimal literal coercion"
        Left e => fail "elab decimal literal coercion" e
 
+testElabSpreadInMap : TestResult
+testElabSpreadInMap =
+  let src = """
+schema Input { a: String, b: Int64, c: Bool, }
+schema Output { new_field: String, a: String, b: Int64, c: Bool, }
+let t : Input -> Output = map { new_field: "test", ... }
+"""
+  in case elabCheck src of
+       Right () => pass "elab spread in map"
+       Left e => fail "elab spread in map" e
+
+testElabSpreadWithRename : TestResult
+testElabSpreadWithRename =
+  let src = """
+schema Input { old: String, b: Int64, c: Bool, }
+schema Output { new_field: String, renamed: String, b: Int64, c: Bool, }
+let t : Input -> Output = map { new_field: "test", renamed: .old, ... }
+"""
+  in case elabCheck src of
+       Right () => pass "elab spread with rename"
+       Left e => fail "elab spread with rename" e
+
 -----------------------------------------------------------
 -- Test Suite
 -----------------------------------------------------------
@@ -582,4 +604,7 @@ elaborateTests = suite "Elaborate Tests"
   , testElabFloatDecimalMixError
   , testElabIntDecimalMixError
   , testElabDecimalLiteralCoercion
+  -- Spread operator tests
+  , testElabSpreadInMap
+  , testElabSpreadWithRename
   ]

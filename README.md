@@ -172,7 +172,9 @@ map {
     total: .price * .quantity,
     margin: .revenue - .cost,
     -- Conditionals
-    status: if .score > 80 then "pass" else "fail"
+    status: if .score > 80 then "pass" else "fail",
+    -- Spread: include all unconsumed input columns
+    ...
 }
 
 -- Join tables
@@ -228,6 +230,36 @@ let convert : Input -> Output =
 ```
 
 Supported target types: all numeric types (`Int8`-`Int64`, `UInt8`-`UInt64`, `Float32`, `Float64`, `Decimal(p,s)`), `String`, `Bool`.
+
+### Spread Operator
+
+Use `...` in a map expression to include all input columns that are not used as sources in explicit field assignments. Spread columns always appear after explicit fields in the output schema:
+
+```haskell
+schema Input {
+    a: String,
+    b: Int64,
+    c: Bool,
+    d: String,
+}
+
+schema Output {
+    new_field: String,
+    renamed: String,
+    a: String,
+    c: Bool,
+    d: String,
+}
+
+let addFields : Input -> Output =
+    map {
+        new_field: "value",
+        renamed: .b as String,
+        ...  -- Includes a, c, d (b is consumed by renamed field)
+    }
+```
+
+The spread operator automatically includes all unconsumed columns, making it easier to add or transform specific fields without manually listing every column.
 
 ## Not a General-Purpose Language
 

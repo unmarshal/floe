@@ -120,6 +120,27 @@ let labelProducts : Product -> LabeledProduct =
         price_tier: if .price > minPrice then "premium" else "budget",
         availability: if .in_stock then "available" else "out of stock"
     }
+
+-- Spread operator in map: include all unconsumed columns
+schema Input {
+    a: String,
+    b: Int64,
+    c: Bool,
+}
+
+schema Output {
+    new_field: String,
+    renamed: String,
+    a: String,
+    c: Bool,
+}
+
+let addFields : Input -> Output =
+    map {
+        new_field: "value",
+        renamed: .b as String,
+        ...  -- Includes all columns not used as sources (a, c)
+    }
 ```haskell
 
 ### Binding Types
@@ -139,7 +160,7 @@ All bindings use the unified syntax `let name : Type = value`:
 - `filter .col` - filter on boolean column
 - `filter .col > 18` - filter with comparison (supports `==`, `!=`, `<`, `>`, `<=`, `>=`)
 - `filter .col1 == .col2` - filter comparing two columns (types must match)
-- `map { field: expr, ... }` - project/transform columns
+- `map { field: expr, ... }` - project/transform columns; use `...` to include all unconsumed input columns
 - `if cond then expr1 else expr2` - conditional expressions in map (generates Polars `when/then/otherwise`)
 - `transform [cols] fn` - apply function to columns
 - `uniqueBy .col` - deduplicate by column

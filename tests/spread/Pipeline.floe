@@ -1,0 +1,28 @@
+-- Test spread operator in map
+
+schema Input {
+    a: String,
+    b: Int64,
+    c: Bool,
+    d: String,
+}
+
+schema Output {
+    new_field: String,
+    renamed: String,
+    a: String,
+    c: Bool,
+    d: String,
+}
+
+let addFields : Input -> Output =
+    map {
+        new_field: "added",
+        renamed: .b as String,
+        ...
+    }
+
+main =
+    read "input.parquet" as Input
+    |> addFields
+    sink "output.parquet"

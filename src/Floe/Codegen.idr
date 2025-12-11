@@ -299,17 +299,20 @@ getRenames (_ :: rest) = getRenames rest
 formatRename : (String, String) -> String
 formatRename (new, old) = quote old ++ ": " ++ quote new
 
--- Generate select with all field assignments
+-- Generate select with all field assignments and optional spread columns
 covering
-mapToPolarsWithContext : List (String, ConstValue) -> List SFnDef -> List (MapAssign s) -> String -> String
-mapToPolarsWithContext consts fnDefs assigns df =
-  let cols = joinWith ", " (map (assignToPolarsWithContext consts fnDefs) assigns)
+mapToPolarsWithContext : List (String, ConstValue) -> List SFnDef -> List (MapAssign s) -> List String -> String -> String
+mapToPolarsWithContext consts fnDefs assigns spreadCols df =
+  let assignCols = map (assignToPolarsWithContext consts fnDefs) assigns
+      spreadExprs = map (\col => "pl.col(\"" ++ col ++ "\")") spreadCols
+      allCols = assignCols ++ spreadExprs
+      cols = joinWith ", " allCols
   in df ++ ".select(" ++ cols ++ ")"
 
 -- Backwards compatible version
 covering
 mapToPolars : List (MapAssign s) -> String -> String
-mapToPolars = mapToPolarsWithContext [] []
+mapToPolars assigns = mapToPolarsWithContext [] [] assigns []
 
 -----------------------------------------------------------
 -- Polars Code Generation
@@ -343,8 +346,8 @@ toPolarsWithConstsAndFns consts fnDefs (Require names _ rest) df =
   in toPolarsWithConstsAndFns consts fnDefs rest (df ++ ".filter(" ++ checks ++ ")")
 toPolarsWithConstsAndFns consts fnDefs (Filter expr rest) df =
   toPolarsWithConstsAndFns consts fnDefs rest (df ++ ".filter(" ++ filterExprToPolars expr ++ ")")
-toPolarsWithConstsAndFns consts fnDefs (MapFields assigns rest) df =
-  toPolarsWithConstsAndFns consts fnDefs rest (mapToPolarsWithContext consts fnDefs assigns df)
+toPolarsWithConstsAndFns consts fnDefs (MapFields assigns spreadCols rest) df =
+  toPolarsWithConstsAndFns consts fnDefs rest (mapToPolarsWithContext consts fnDefs assigns spreadCols df)
 toPolarsWithConstsAndFns consts fnDefs (Transform cols fn _ _ rest) df =
   let exprs = joinWith ", " (map (transformColWithFnAndConsts consts fnDefs fn) cols)
   in toPolarsWithConstsAndFns consts fnDefs rest (df ++ ".with_columns(" ++ exprs ++ ")")

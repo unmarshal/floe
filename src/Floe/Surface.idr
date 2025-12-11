@@ -239,10 +239,12 @@ exprSpan (SCast s _ _) = s
 public export
 data SMapField
   = SFieldAssign Span String SExpr   -- field: expr
+  | SSpread Span                      -- ... (spread remaining columns)
 
 public export covering
 Show SMapField where
   show (SFieldAssign _ nm e) = nm ++ ": " ++ show e
+  show (SSpread _) = "..."
 
 -----------------------------------------------------------
 -- Operations (pipeline steps)

@@ -152,10 +152,12 @@ data ProcessedField
   | PFFnApp String String String           -- newName: fn_name .col
   | PFBuiltinApp String BuiltinCall String -- newName: builtin .col
   | PFExpr String SExpr                    -- newName: <complex expr like if-then-else>
+  | PFSpread                               -- ... (spread remaining columns)
 
 -- Process map fields into assignments
 processMapFields : List SMapField -> List ProcessedField
 processMapFields [] = []
+processMapFields (SSpread _ :: rest) = PFSpread :: processMapFields rest
 processMapFields (SFieldAssign _ newName expr :: rest) =
   let assigns = processMapFields rest
   in case expr of
@@ -232,6 +234,9 @@ validateMapSources span s (PFBuiltinApp _ _ colName :: rest) =
     else err (ColNotFound span colName s)
 validateMapSources span s (PFExpr _ _ :: rest) =
   -- Complex expressions are validated during elaboration
+  validateMapSources span s rest
+validateMapSources span s (PFSpread :: rest) =
+  -- Spread doesn't reference specific columns, just passes through unconsumed ones
   validateMapSources span s rest
 
 -- Determine output type of a builtin application
@@ -315,16 +320,77 @@ fieldToCol ctx srcSchema (PFFnApp newName _ colName) = MkCol newName (getColType
 fieldToCol ctx srcSchema (PFBuiltinApp newName builtin colName) =
   MkCol newName (builtinOutputTy builtin (getColType srcSchema colName))
 fieldToCol ctx srcSchema (PFExpr newName expr) = MkCol newName (inferExprTy ctx srcSchema expr)
+fieldToCol ctx srcSchema PFSpread = MkCol "" TString  -- Dummy, should never be called directly
 
--- Convert processed fields to schema (preserving order)
+-- Check if list contains spread
+hasSpread : List ProcessedField -> Bool
+hasSpread [] = False
+hasSpread (PFSpread :: _) = True
+hasSpread (_ :: rest) = hasSpread rest
+
+-- Extract column references from a surface expression
+getExprSources : SExpr -> List String
+getExprSources (SColRef _ nm) = [nm]
+getExprSources (SColRefNullCheck _ nm) = [nm]
+getExprSources (SHash _ exprs) = concatMap getExprSources exprs
+getExprSources (SListLen _ expr) = getExprSources expr
+getExprSources (SFnApp _ _ expr) = getExprSources expr
+getExprSources (SBuiltinApp _ _ expr) = getExprSources expr
+getExprSources (SVar _ _) = []
+getExprSources (SStrLit _ _) = []
+getExprSources (SIntLit _ _) = []
+getExprSources (SFloatLit _ _) = []
+getExprSources (SBoolLit _ _) = []
+getExprSources (SAnd _ e1 e2) = getExprSources e1 ++ getExprSources e2
+getExprSources (SOr _ e1 e2) = getExprSources e1 ++ getExprSources e2
+getExprSources (SEq _ e1 e2) = getExprSources e1 ++ getExprSources e2
+getExprSources (SNeq _ e1 e2) = getExprSources e1 ++ getExprSources e2
+getExprSources (SLt _ e1 e2) = getExprSources e1 ++ getExprSources e2
+getExprSources (SGt _ e1 e2) = getExprSources e1 ++ getExprSources e2
+getExprSources (SLte _ e1 e2) = getExprSources e1 ++ getExprSources e2
+getExprSources (SGte _ e1 e2) = getExprSources e1 ++ getExprSources e2
+getExprSources (SIf _ cond thenE elseE) = getExprSources cond ++ getExprSources thenE ++ getExprSources elseE
+getExprSources (SAdd _ e1 e2) = getExprSources e1 ++ getExprSources e2
+getExprSources (SSub _ e1 e2) = getExprSources e1 ++ getExprSources e2
+getExprSources (SMul _ e1 e2) = getExprSources e1 ++ getExprSources e2
+getExprSources (SDiv _ e1 e2) = getExprSources e1 ++ getExprSources e2
+getExprSources (SConcat _ e1 e2) = getExprSources e1 ++ getExprSources e2
+getExprSources (SCast _ expr _) = getExprSources expr
+
+-- Get columns consumed by explicit field assignments
+getConsumedColumns : List ProcessedField -> List String
+getConsumedColumns [] = []
+getConsumedColumns (PFColAssign _ oldName :: rest) = oldName :: getConsumedColumns rest
+getConsumedColumns (PFHashAssign _ cols :: rest) = cols ++ getConsumedColumns rest
+getConsumedColumns (PFFnApp _ _ col :: rest) = col :: getConsumedColumns rest
+getConsumedColumns (PFBuiltinApp _ _ col :: rest) = col :: getConsumedColumns rest
+getConsumedColumns (PFSpread :: rest) = getConsumedColumns rest
+getConsumedColumns (PFExpr _ expr :: rest) = getExprSources expr ++ getConsumedColumns rest
+
+-- Compute spread schema: input columns minus consumed columns
+computeSpreadSchema : Schema -> List String -> Schema
+computeSpreadSchema [] _ = []
+computeSpreadSchema (col@(MkCol name _) :: rest) consumedCols =
+  if name `elem` consumedCols
+    then computeSpreadSchema rest consumedCols
+    else col :: computeSpreadSchema rest consumedCols
+
+-- Convert processed fields to schema (preserving order), excluding spread
 fieldsToSchema : Context -> Schema -> List ProcessedField -> Schema
 fieldsToSchema ctx srcSchema [] = []
+fieldsToSchema ctx srcSchema (PFSpread :: rest) = fieldsToSchema ctx srcSchema rest  -- Skip spread
 fieldsToSchema ctx srcSchema (f :: rest) = fieldToCol ctx srcSchema f :: fieldsToSchema ctx srcSchema rest
 
 -- Compute output schema for map operation
--- Preserves the order of fields as specified in the map expression
+-- Explicit fields come first, then spread columns (if spread is present)
 computeMapSchema : Context -> Schema -> List ProcessedField -> Schema
-computeMapSchema ctx srcSchema fields = fieldsToSchema ctx srcSchema fields
+computeMapSchema ctx srcSchema fields =
+  let explicitSchema = fieldsToSchema ctx srcSchema fields
+  in if hasSpread fields
+       then let consumedCols = getConsumedColumns fields
+                spreadSchema = computeSpreadSchema srcSchema consumedCols
+            in explicitSchema ++ spreadSchema
+       else explicitSchema
 
 -- Forward declaration for MapExprResult and elabMapExpr (defined after elabFilterExpr)
 data MapExprResult : Schema -> Type where
@@ -360,10 +426,13 @@ elabMapAssign ctx span s (PFBuiltinApp new builtin col) =
 elabMapAssign ctx span s (PFExpr new expr) = do
   MkMapExprResult ty mapExpr <- elabMapExpr ctx span s expr
   ok (ExprAssign new ty mapExpr)
+elabMapAssign ctx span s PFSpread = err (ParseError span "Internal error: PFSpread should be filtered out")
 
 -- Convert ProcessedField list to MapAssign list with proofs
+-- Spread fields are filtered out - they're handled at schema level only
 elabMapAssignsWithSpan : Context -> Span -> (s : Schema) -> List ProcessedField -> Result (List (MapAssign s))
 elabMapAssignsWithSpan ctx span s [] = ok []
+elabMapAssignsWithSpan ctx span s (PFSpread :: rest) = elabMapAssignsWithSpan ctx span s rest  -- Skip spread
 elabMapAssignsWithSpan ctx span s (f :: rest) = do
   assign <- elabMapAssign ctx span s f
   assigns <- elabMapAssignsWithSpan ctx span s rest
@@ -687,7 +756,10 @@ elabOp ctx sIn (SMap span fields) = do
   let processedFields = processMapFields fields
   let outSchema = computeMapSchema ctx sIn processedFields
   assigns <- elabMapAssignsWithSpan ctx span sIn processedFields
-  ok (outSchema ** MapFields assigns Done)
+  let spreadCols = if hasSpread processedFields
+                     then map (\(MkCol name _) => name) (computeSpreadSchema sIn (getConsumedColumns processedFields))
+                     else []
+  ok (outSchema ** MapFields assigns spreadCols Done)
 
 -- Transform: apply function to columns
 elabOp ctx sIn (STransform span cols fn) =
@@ -737,7 +809,7 @@ chain (Drop names prf rest) p2 = Drop names prf (chain rest p2)
 chain (Select names prf rest) p2 = Select names prf (chain rest p2)
 chain (Require names prf rest) p2 = Require names prf (chain rest p2)
 chain (Filter expr rest) p2 = Filter expr (chain rest p2)
-chain (MapFields assigns rest) p2 = MapFields assigns (chain rest p2)
+chain (MapFields assigns spreadCols rest) p2 = MapFields assigns spreadCols (chain rest p2)
 chain (Transform cols fn fnInTy prf rest) p2 = Transform cols fn fnInTy prf (chain rest p2)
 chain (UniqueBy col prf rest) p2 = UniqueBy col prf (chain rest p2)
 chain (Join tbl sRight lCol rCol prfL prfR rest) p2 = Join tbl sRight lCol rCol prfL prfR (chain rest p2)

@@ -798,11 +798,18 @@ mutual
 pMapField : Parser SMapField
 pMapField st = do
   (sp, st) <- pSpan st
-  (name, st) <- pFieldIdent st  -- output field names can have underscores (external data)
-  ((), st) <- expect TColon st
-  (expr, st) <- pExpr st
-  ((), st) <- pOptComma st
-  Right (SFieldAssign sp name expr, st)
+  -- Check for spread first
+  if isToken TDotDotDot st
+    then do
+      let st' = advanceP st  -- skip '...'
+      ((), st'') <- pOptComma st'
+      Right (SSpread sp, st'')
+    else do
+      (name, st) <- pFieldIdent st  -- output field names can have underscores (external data)
+      ((), st) <- expect TColon st
+      (expr, st) <- pExpr st
+      ((), st) <- pOptComma st
+      Right (SFieldAssign sp name expr, st)
 
 -----------------------------------------------------------
 -- Operation Parser

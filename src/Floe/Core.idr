@@ -307,7 +307,9 @@ data Pipeline : Schema -> Schema -> Type where
 
   -- Map: field assignments defining new schema
   -- Assignments carry proofs that referenced columns exist in sIn
+  -- spreadCols: columns from sIn to include at the end (for ... spread)
   MapFields : (assigns : List (MapAssign sIn))
+            -> (spreadCols : List String)
             -> Pipeline sIntermediate sOut
             -> Pipeline sIn sOut
 
