@@ -315,6 +315,14 @@ Eq Col where
   c1 == c2 = c1.name == c2.name && c1.ty == c2.ty
 
 public export
+DecEq Col where
+  decEq (MkCol n1 t1) (MkCol n2 t2) with (decEq n1 n2)
+    decEq (MkCol n1 t1) (MkCol n2 t2) | No contra = No (\Refl => contra Refl)
+    decEq (MkCol n1 t1) (MkCol n1 t2) | Yes Refl with (decEq t1 t2)
+      decEq (MkCol n1 t1) (MkCol n1 t2) | Yes Refl | No contra = No (\Refl => contra Refl)
+      decEq (MkCol n1 t1) (MkCol n1 t1) | Yes Refl | Yes Refl = Yes Refl
+
+public export
 Show Col where
   show c = c.name ++ ": " ++ show c.ty
 
@@ -331,6 +339,12 @@ showSchema cs = "{ " ++ go cs ++ " }"
     go [] = ""
     go [c] = show c
     go (c :: rest) = show c ++ ", " ++ go rest
+
+-- Helper to create schema mismatch error message
+public export
+schemaMismatchMsg : Schema -> Schema -> String
+schemaMismatchMsg expected actual =
+  "Schema mismatch:\n  Expected: " ++ showSchema expected ++ "\n  Actual:   " ++ showSchema actual
 
 -----------------------------------------------------------
 -- Source Location (for error messages)

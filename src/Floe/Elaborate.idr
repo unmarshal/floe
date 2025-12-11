@@ -909,12 +909,6 @@ elabOps ctx sIn (op :: ops) = do
 -- Elaborate Transform
 -----------------------------------------------------------
 
--- Check if two schemas are equal (same columns in same order)
-schemasEqual : Schema -> Schema -> Bool
-schemasEqual [] [] = True
-schemasEqual (c1 :: r1) (c2 :: r2) = c1 == c2 && schemasEqual r1 r2
-schemasEqual _ _ = False
-
 public export
 elabTransformDef : Context -> STransformDef -> Result (sIn : Schema ** sOut : Schema ** Pipeline sIn sOut)
 elabTransformDef ctx (MkSTransformDef span inName outName ops) = do
@@ -924,13 +918,13 @@ elabTransformDef ctx (MkSTransformDef span inName outName ops) = do
     Just s => ok s
   -- Elaborate operations
   (sOut ** pipeline) <- elabOps ctx sIn ops
-  -- Validate output schema matches declared target
+  -- Validate output schema matches declared target with proof
   case lookupSchema outName ctx of
     Nothing => err (SchemaNotFound span outName)
     Just expectedOut =>
-      if schemasEqual sOut expectedOut
-        then ok (sIn ** sOut ** pipeline)
-        else err (SchemaMismatch span inName outName expectedOut sOut)
+      case decEq sOut expectedOut of
+        Yes Refl => ok (sIn ** sOut ** pipeline)
+        No _ => err (SchemaMismatch span inName outName expectedOut sOut)
 
 -----------------------------------------------------------
 -- Elaborate Let Bindings
@@ -963,9 +957,9 @@ elabLetBind ctx typeSigs (MkSLetBind span name pipeline) = do
       case lookupSchema sig.outTy ctx of
         Nothing => err (SchemaNotFound span sig.outTy)
         Just expectedOut =>
-          if schemasEqual sOut expectedOut
-            then ok (sIn ** sOut ** p)
-            else err (SchemaMismatch span sig.inTy sig.outTy expectedOut sOut)
+          case decEq sOut expectedOut of
+            Yes Refl => ok (sIn ** sOut ** p)
+            No _ => err (SchemaMismatch span sig.inTy sig.outTy expectedOut sOut)
 
 -----------------------------------------------------------
 -- Elaborate Program
@@ -1084,9 +1078,9 @@ validatePipelineBinding ctx b =
           case lookupSchema outName ctx of
             Nothing => err (SchemaNotFound b.span outName)
             Just expectedOut =>
-              if schemasEqual sOut expectedOut
-                then ok ()
-                else err (SchemaMismatch b.span inName outName expectedOut sOut)
+              case decEq sOut expectedOut of
+                Yes Refl => ok ()
+                No _ => err (SchemaMismatch b.span inName outName expectedOut sOut)
     _ => ok ()  -- Not a pipeline binding, skip
 
 -- Validate a column function binding
