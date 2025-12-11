@@ -456,21 +456,20 @@ extractCmpOp (SLte _ l r) = Just (l, CmpLte, r)
 extractCmpOp (SGte _ l r) = Just (l, CmpGte, r)
 extractCmpOp _ = Nothing
 
+-- Helper: validate column is boolean type
+validateBoolCol : Span -> (s : Schema) -> String -> Result (FilterExpr s)
+validateBoolCol span s col =
+  case findColWithTy s col TBool of
+    Just prf => ok (FCol col prf)
+    Nothing => case getColTy s col of
+      Nothing => err (ColNotFound span col s)
+      Just t => err (ColNotBool span col t)
+
 -- Elaborate a filter expression to typed FilterExpr
 elabFilterExpr : Context -> Span -> (s : Schema) -> SExpr -> Result (FilterExpr s)
 -- Simple column reference (must be Bool)
-elabFilterExpr ctx span s (SColRef _ col) =
-  case findColWithTy s col TBool of
-    Just prf => ok (FCol col prf)
-    Nothing => case getColTy s col of
-      Nothing => err (ColNotFound span col s)
-      Just t => err (ColNotBool span col t)
-elabFilterExpr ctx span s (SColRefNullCheck _ col) =
-  case findColWithTy s col TBool of
-    Just prf => ok (FCol col prf)
-    Nothing => case getColTy s col of
-      Nothing => err (ColNotFound span col s)
-      Just t => err (ColNotBool span col t)
+elabFilterExpr ctx span s (SColRef _ col) = validateBoolCol span s col
+elabFilterExpr ctx span s (SColRefNullCheck _ col) = validateBoolCol span s col
 -- Logical AND
 elabFilterExpr ctx span s (SAnd _ l r) = do
   lExpr <- elabFilterExpr ctx span s l
