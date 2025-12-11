@@ -16,15 +16,24 @@ import System
 import Data.List
 
 -----------------------------------------------------------
+-- Utilities
+-----------------------------------------------------------
+
+-- Convert Maybe to Either with error
+note : err -> Maybe a -> Either err a
+note err Nothing  = Left err
+note _   (Just x) = Right x
+
+-----------------------------------------------------------
 -- Build GeneratedProgram from parsed/elaborated program
 -----------------------------------------------------------
 
 -- Convert SMainStep to EntryStep (with error reporting)
 mainStepToEntry : Context -> SMainStep -> Either FloeError EntryStep
-mainStepToEntry ctx (SRead sp file schemaName) =
-  case lookupSchema schemaName ctx of
-    Just schema => Right (ERead file schemaName schema)
-    Nothing => Left (ParseError sp ("Schema '" ++ schemaName ++ "' is not defined"))
+mainStepToEntry ctx (SRead sp file schemaName) = do
+  schema <- note (ParseError sp ("Schema '" ++ schemaName ++ "' is not defined"))
+                 (lookupSchema schemaName ctx)
+  pure (ERead file schemaName schema)
 mainStepToEntry ctx (SPipeThrough _ fnName) = Right (EPipe fnName)
 mainStepToEntry ctx (SWrite _ file) = Right (EWrite file)
 
@@ -36,42 +45,38 @@ sequenceEither (Right x :: rest) = map (x ::) (sequenceEither rest)
 
 -- Build a GeneratedFn from a legacy let binding
 buildGeneratedFn : Context -> List STypeSig -> SLetBind -> Either FloeError GeneratedFn
-buildGeneratedFn ctx typeSigs b =
-  case elabLetBind ctx typeSigs b of
-    Left e => Left e
-    Right (sIn ** sOut ** pipeline) =>
-      let (inName, outName) = case findSig b.name typeSigs of
-            Nothing => ("Unknown", "Unknown")
-            Just sig => (sig.inTy, sig.outTy)
-      in Right $ MkGeneratedFn b.name sIn inName outName (sIn ** sOut ** pipeline)
+buildGeneratedFn ctx typeSigs b = do
+  (sIn ** sOut ** pipeline) <- elabLetBind ctx typeSigs b
+  let (inName, outName) = case findSig b.name typeSigs of
+        Nothing => ("Unknown", "Unknown")
+        Just sig => (sig.inTy, sig.outTy)
+  pure (MkGeneratedFn b.name sIn inName outName (sIn ** sOut ** pipeline))
   where
     findSig : String -> List STypeSig -> Maybe STypeSig
     findSig _ [] = Nothing
     findSig nm (s :: rest) = if s.name == nm then Just s else findSig nm rest
+
+-- Elaborate a pipeline definition
+elabPipeline : Context -> (sIn : Schema) -> Span -> SPipeline -> Either FloeError (sOut : Schema ** Pipeline sIn sOut)
+elabPipeline ctx sIn span (SPipeRef _ ref) = Left (ParseError span "Pipeline references not yet supported")
+elabPipeline ctx sIn span (SPipe _ ops _) = elabOps ctx sIn ops
 
 -- Build a GeneratedFn from a new-style binding (let name : In -> Out = pipeline)
 buildGeneratedFnFromBinding : Context -> SBinding -> Either FloeError (Maybe GeneratedFn)
 buildGeneratedFnFromBinding ctx b =
   case (b.ty, b.val) of
     (SBTyPipeline inName outName, SBValPipeline pipeline) => do
-      -- Look up input schema
-      sIn <- case lookupSchema inName ctx of
-        Nothing => Left (SchemaNotFound b.span inName)
-        Just s => Right s
-      -- Elaborate the pipeline
-      case pipeline of
-        SPipeRef _ refName => Left (ParseError b.span "Pipeline references not yet supported")
-        SPipe _ ops _ => do
-          (sOut ** p) <- elabOps ctx sIn ops
-          Right (Just (MkGeneratedFn b.name sIn inName outName (sIn ** sOut ** p)))
+      sIn <- note (SchemaNotFound b.span inName) (lookupSchema inName ctx)
+      (sOut ** p) <- elabPipeline ctx sIn b.span pipeline
+      pure (Just (MkGeneratedFn b.name sIn inName outName (sIn ** sOut ** p)))
     _ => Right Nothing  -- Not a pipeline binding
 
 -- Build table bindings (with error reporting)
 buildTableBinding : Context -> STableBind -> Either FloeError TableBinding
-buildTableBinding ctx tb =
-  case lookupSchema tb.schema ctx of
-    Just schema => Right $ MkTableBinding tb.name tb.file schema
-    Nothing => Left (ParseError tb.span ("Schema '" ++ tb.schema ++ "' is not defined"))
+buildTableBinding ctx tb = do
+  schema <- note (ParseError tb.span ("Schema '" ++ tb.schema ++ "' is not defined"))
+                 (lookupSchema tb.schema ctx)
+  pure (MkTableBinding tb.name tb.file schema)
 
 -- Extract column function definitions from new-style bindings
 -- Converts SBinding with SBTyColFn to SFnDef for codegen
@@ -99,11 +104,11 @@ buildProgram opts ctx prog = do
   let newFunctions = catMaybes newFunctionsMaybe
   let functions = legacyFunctions ++ newFunctions
   (params, steps) <- case getMain prog of
-    Nothing => Right ([], [])
+    Nothing => pure ([], [])
     Just m => do
       steps <- sequenceEither (map (mainStepToEntry ctx) m.body)
-      Right (m.params, steps)
-  Right $ MkGeneratedProgram opts consts fnDefs tables functions params steps
+      pure (m.params, steps)
+  pure (MkGeneratedProgram opts consts fnDefs tables functions params steps)
 
 -----------------------------------------------------------
 -- Compile a .floe file
