@@ -22,6 +22,8 @@ idris2 --build floe-test.ipkg
 floe/
 ├── floe.ipkg              # Main compiler package
 ├── floe-test.ipkg         # Test package
+├── Makefile               # Build and test commands
+├── LICENSE                # MIT license
 ├── src/
 │   ├── Floe/
 │   │   ├── Main.idr       # CLI entry point
@@ -42,9 +44,15 @@ floe/
 │       └── Runner.idr     # Test framework
 ├── examples/
 │   ├── Authorship.floe    # Full example with schemas, transforms, main
-│   ├── Basic.floe         # Basic example
+│   ├── Basic.floe         # Basic operations example
 │   └── JoinExample.floe   # Join operations example
-└── Makefile
+└── tests/
+    ├── run.sh             # Integration test runner
+    └── join_enriches_orders/  # Example integration test
+        ├── Pipeline.floe      # The floe program
+        ├── users.parquet      # Input data
+        ├── orders.parquet     # Input data
+        └── expected.parquet   # Expected output
 ```
 
 ## Architecture
@@ -121,7 +129,9 @@ fn main input output =
 
 ## The Proof Mechanism
 
-### `HasCol` - Proof a field exists
+The Typed IR carries proofs that operations are valid. These proofs are erased at runtime (quantity `0`) so they have zero cost.
+
+### `HasCol` - Proof a field exists with a specific type
 
 ```idris
 data HasCol : Schema -> String -> Ty -> Type where
@@ -130,6 +140,36 @@ data HasCol : Schema -> String -> Ty -> Type where
 ```
 
 A value of type `HasCol s "work_id" TStr` is *evidence* that schema `s` contains a string field "work_id".
+
+### `AllHasCol` - Proof all fields in a list exist
+
+```idris
+data AllHasCol : Schema -> List String -> Type where
+  AllNil  : AllHasCol s []
+  AllCons : {0 t : Ty} -> HasCol s nm t -> AllHasCol s nms -> AllHasCol s (nm :: nms)
+```
+
+Used by `Drop`, `Select`, `UniqueBy` to prove all referenced columns exist.
+
+### `AllHasColTy` - Proof all fields have the same type
+
+```idris
+data AllHasColTy : Schema -> List String -> Ty -> Type where
+  AllTyNil  : AllHasColTy s [] t
+  AllTyCons : HasCol s nm t -> AllHasColTy s nms t -> AllHasColTy s (nm :: nms) t
+```
+
+Used by `Transform` to prove all columns being transformed have the expected type (e.g., all are `String` for a string function).
+
+### `AllHasMaybeCol` - Proof all fields are nullable
+
+```idris
+data AllHasMaybeCol : Schema -> List String -> Type where
+  AllMaybeNil  : AllHasMaybeCol s []
+  AllMaybeCons : {0 t : Ty} -> HasCol s nm (TMaybe t) -> AllHasMaybeCol s nms -> AllHasMaybeCol s (nm :: nms)
+```
+
+Used by `Require` to prove all columns being required are actually `Maybe T` (so they can be refined to `T`).
 
 ### Elaboration
 
