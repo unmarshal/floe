@@ -204,7 +204,7 @@ schema A { x: String, }
 schema B { x: String, }
 let t : A -> B = require [x]
 """
-  in case elabExpectError src "nullable" of
+  in case elabExpectError src "expected Maybe" of
        Right () => pass "elab error: require non-nullable"
        Left e => fail "elab error: require non-nullable" e
 

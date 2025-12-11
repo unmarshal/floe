@@ -112,6 +112,17 @@ elabSchema (MkSSchema span nm cols) = do
 -- Helpers (must be before elabOp)
 -----------------------------------------------------------
 
+-- Unified validation + proof construction
+ensureAllCols : Span -> (s : Schema) -> (nms : List String) -> Result (AllHasCol s nms)
+ensureAllCols span s [] = ok AllNil
+ensureAllCols span s (nm :: nms) =
+  case findCol s nm of
+    Nothing => err (ColNotFound span nm s)
+    Just (MkColProof t prf) => do
+      rest <- ensureAllCols span s nms
+      ok (AllCons prf rest)
+
+-- Legacy version for backwards compatibility (will be removed)
 validateCols : Span -> Schema -> List String -> Result ()
 validateCols span s [] = ok ()
 validateCols span s (n :: ns) =
@@ -119,6 +130,33 @@ validateCols span s (n :: ns) =
     then validateCols span s ns
     else err (ColNotFound span n s)
 
+-- Unified validation + proof construction for typed columns
+ensureAllColsTy : Span -> (s : Schema) -> (nms : List String) -> (t : Ty) -> Result (AllHasColTy s nms t)
+ensureAllColsTy span s [] t = ok AllTyNil
+ensureAllColsTy span s (nm :: nms) t =
+  case findColWithTy s nm t of
+    Just prf => do
+      rest <- ensureAllColsTy span s nms t
+      ok (AllTyCons prf rest)
+    Nothing =>
+      case findCol s nm of
+        Nothing => err (ColNotFound span nm s)
+        Just (MkColProof actualTy _) => err (ParseError span ("Column '" ++ nm ++ "' has type " ++ show actualTy ++ ", expected " ++ show t))
+
+-- Unified validation + proof construction for Maybe columns
+ensureAllMaybeCols : Span -> (s : Schema) -> (nms : List String) -> Result (AllHasMaybeCol s nms)
+ensureAllMaybeCols span s [] = ok AllMaybeNil
+ensureAllMaybeCols span s (nm :: nms) =
+  case findCol s nm of
+    Nothing => err (ColNotFound span nm s)
+    Just (MkColProof ty prf) =>
+      case ty of
+        TMaybe t => do
+          rest <- ensureAllMaybeCols span s nms
+          ok (AllMaybeCons prf rest)
+        _ => err (ColNotNullable span nm ty)
+
+-- Legacy version for backwards compatibility (will be removed)
 validateNullableCols : Span -> Schema -> List String -> Result ()
 validateNullableCols span s [] = ok ()
 validateNullableCols span s (n :: ns) =
@@ -776,22 +814,19 @@ elabOp ctx sIn (SRename span old new) =
         else ok (RenameCol old new sIn ** Rename old new prf Done)
 
 -- Drop columns
-elabOp ctx sIn (SDrop span names) =
-  case findAllCols sIn names of
-    Nothing => err (ParseError span "One or more columns not found for drop")
-    Just prf => ok (DropCols names sIn ** Drop names prf Done)
+elabOp ctx sIn (SDrop span names) = do
+  prf <- ensureAllCols span sIn names
+  ok (DropCols names sIn ** Drop names prf Done)
 
 -- Select columns
-elabOp ctx sIn (SSelect span names) =
-  case findAllCols sIn names of
-    Nothing => err (ParseError span "One or more columns not found for select")
-    Just prf => ok (SelectCols names sIn ** Select names prf Done)
+elabOp ctx sIn (SSelect span names) = do
+  prf <- ensureAllCols span sIn names
+  ok (SelectCols names sIn ** Select names prf Done)
 
 -- Require: filter nulls
-elabOp ctx sIn (SRequire span names) =
-  case findAllMaybeCols sIn names of
-    Nothing => err (ParseError span "One or more columns not found or not nullable for require")
-    Just prf => ok (RefineCols names sIn ** Require names prf Done)
+elabOp ctx sIn (SRequire span names) = do
+  prf <- ensureAllMaybeCols span sIn names
+  ok (RefineCols names sIn ** Require names prf Done)
 
 -- Filter on boolean expression
 elabOp ctx sIn (SFilter span expr) = do
@@ -809,15 +844,13 @@ elabOp ctx sIn (SMap span fields) = do
   ok (outSchema ** MapFields assigns spreadCols Done)
 
 -- Transform: apply function to columns
-elabOp ctx sIn (STransform span cols fn) =
-  case lookupScalarFn fn ctx of
+elabOp ctx sIn (STransform span cols fn) = do
+  (fnInTy, fnOutTy) <- case lookupScalarFn fn ctx of
     Nothing => err (ParseError span ("Unknown function '" ++ fn ++ "'"))
-    Just (fnInTy, fnOutTy) =>
-      case findAllColsTy sIn cols fnInTy of
-        Nothing => err (ParseError span ("Columns " ++ show cols ++ " must all be type " ++ show fnInTy ++ " for function '" ++ fn ++ "'"))
-        Just prf =>
-          -- Compute output schema by updating transformed column types
-          ok (updateColTypes sIn cols fnOutTy ** Transform cols fn fnInTy fnOutTy prf Done)
+    Just types => ok types
+  prf <- ensureAllColsTy span sIn cols fnInTy
+  -- Compute output schema by updating transformed column types
+  ok (updateColTypes sIn cols fnOutTy ** Transform cols fn fnInTy fnOutTy prf Done)
 
 -- UniqueBy: deduplicate based on a column
 elabOp ctx sIn (SUniqueBy span expr) =
