@@ -9,7 +9,7 @@ A dependently-typed compiler for a data pipeline DSL that generates Python/Polar
 idris2 --build floe.ipkg
 
 # Compile a .floe file to Python
-./build/exec/floe examples/Authorship.floe > out.py
+./build/exec/floe examples/Basic.floe > out.py
 
 # Run tests
 idris2 --build floe-test.ipkg
@@ -43,8 +43,7 @@ floe/
 │       ├── Assert.idr     # Test assertions
 │       └── Runner.idr     # Test framework
 ├── examples/
-│   ├── Authorship.floe    # Full example with schemas, transforms, main
-│   ├── Basic.floe         # Basic operations example
+│   ├── Basic.floe         # Basic operations (rename, drop, filter)
 │   └── JoinExample.floe   # Join operations example
 └── tests/
     ├── run.sh             # Integration test runner
@@ -68,37 +67,32 @@ The Typed IR uses dependent types to encode schema correctness. When elaboration
 ## DSL Syntax
 
 ```floe
--- Constants and external functions
-let openalex = "https://openalex.org/"
-
--- Scalar function (String -> String)
-fn stripOaPrefix :: String -> String
-fn stripOaPrefix = stripPrefix openalex
-
 -- Schema definitions
-schema WorksAuthorship {
-    work_id: String,
-    author_id: String,
-    institution_id: String,
+schema RawUser {
+    user_id: String,
+    full_name: String,
+    email_address: String,
+    is_active: Bool,
 }
 
-schema Authorship {
-    publication_id: String,
-    author_id: String,
-    affiliated_organization_id: String,
+schema User {
+    id: String,
+    name: String,
+    email: String,
 }
 
 -- Pipeline functions with type signatures
-fn transform :: WorksAuthorship -> Authorship
-fn transform =
-    rename work_id publication_id >>
-    rename institution_id affiliated_organization_id >>
-    transform [publication_id] stripOaPrefix
+fn cleanUser :: RawUser -> User
+fn cleanUser =
+    rename user_id id >>
+    rename full_name name >>
+    rename email_address email >>
+    drop [is_active]
 
 -- Entry point
 fn main input output =
-    read input as WorksAuthorship
-    |> transform
+    read input as RawUser
+    |> cleanUser
     write output
 ```
 
@@ -139,7 +133,7 @@ data HasCol : Schema -> String -> Ty -> Type where
   There : HasCol rest nm t -> HasCol (f :: rest) nm t
 ```
 
-A value of type `HasCol s "work_id" TStr` is *evidence* that schema `s` contains a string field "work_id".
+A value of type `HasCol s "user_id" TStr` is *evidence* that schema `s` contains a string field "user_id".
 
 ### `AllHasCol` - Proof all fields in a list exist
 

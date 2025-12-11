@@ -1,52 +1,51 @@
--- Floe example: Transform OpenAlex works_authorship to our Authorship schema
+-- Basic Floe example: User data transformations
 
-schema WorksAuthorship {
-  work_id: String
-  author_id: String
-  institution_id: String
-  author_position: String
-  is_corresponding: Bool
+schema RawUser {
+    user_id: String,
+    full_name: String,
+    email_address: String,
+    is_active: Bool,
 }
 
-schema Authorship {
-  publication_id: String
-  author_id: String
-  affiliated_organization_id: String
+schema User {
+    id: String,
+    name: String,
+    email: String,
 }
 
-schema NullableData {
-  id: Int64
-  source_id: Maybe String
-  target_id: Maybe String
+schema NullableRecord {
+    id: Int64,
+    value: Maybe String,
+    label: Maybe String,
 }
 
-schema CleanData {
-  id: Int64
-  source_id: String
-  target_id: String
+schema CleanRecord {
+    id: Int64,
+    value: String,
+    label: String,
 }
 
-schema CorrespondingAuthors {
-  work_id: String
-  author_id: String
-  institution_id: String
-  author_position: String
-  is_corresponding: Bool
+schema ActiveUser {
+    user_id: String,
+    full_name: String,
+    email_address: String,
+    is_active: Bool,
 }
 
--- Main transformation: works_authorship -> authorship
-transform WorksAuthorship -> Authorship {
-  rename work_id -> publication_id
-  rename institution_id -> affiliated_organization_id
-  drop author_position, is_corresponding
-}
+-- Transform raw user data to clean schema
+fn cleanUser :: RawUser -> User
+fn cleanUser =
+    rename user_id id >>
+    rename full_name name >>
+    rename email_address email >>
+    drop [is_active]
 
 -- Filter nulls and refine types
-transform NullableData -> CleanData {
-  require source_id, target_id
-}
+fn requireFields :: NullableRecord -> CleanRecord
+fn requireFields =
+    require [value, label]
 
--- Filter to only corresponding authors
-transform WorksAuthorship -> CorrespondingAuthors {
-  filter .is_corresponding
-}
+-- Filter to only active users
+fn activeOnly :: RawUser -> ActiveUser
+fn activeOnly =
+    filter .is_active

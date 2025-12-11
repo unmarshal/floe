@@ -224,10 +224,10 @@ testCodegenTransform =
   let src = """
 schema A { x: String, }
 schema B { x: String, }
-fn stripOa :: String -> String
-fn stripOa = stripPrefix "https://openalex.org/"
+fn stripHttp :: String -> String
+fn stripHttp = stripPrefix "https://"
 fn t :: A -> B
-fn t = transform [x] stripOa
+fn t = transform [x] stripHttp
 """
   in case generateCode src of
        Right code =>

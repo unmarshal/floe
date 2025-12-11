@@ -11,40 +11,43 @@ Data pipelines fail at runtime with schema mismatches, missing columns, and type
 Floe uses dependent types (in Idris 2) to make invalid pipelines unrepresentable. If your pipeline compiles, every column reference is valid, every type matches, and the output schema is exactly what you declared.
 
 ```floe
-schema WorksAuthorship {
-    work_id: String,
-    author_id: String,
-    institution_id: String,
+schema RawUser {
+    user_id: String,
+    full_name: String,
+    email_address: String,
+    is_active: Bool,
 }
 
-schema Authorship {
-    publication_id: String,
-    author_id: String,
-    affiliated_organization_id: String,
+schema User {
+    id: String,
+    name: String,
+    email: String,
 }
 
-fn transform :: WorksAuthorship -> Authorship
-fn transform =
-    rename work_id publication_id >>
-    rename institution_id affiliated_organization_id
+fn cleanUser :: RawUser -> User
+fn cleanUser =
+    rename user_id id >>
+    rename full_name name >>
+    rename email_address email >>
+    drop [is_active]
 ```
 
 The compiler proves:
-- `work_id` exists in `WorksAuthorship` (and is a String)
-- After rename, `publication_id` exists (and `work_id` doesn't)
-- The final schema exactly matches `Authorship`
+- `user_id` exists in `RawUser` (and is a String)
+- After rename, `id` exists (and `user_id` doesn't)
+- The final schema exactly matches `User`
 
 If you make a mistake, the compiler catches it:
 
 ```floe
-fn transform :: WorksAuthorship -> Authorship
-fn transform =
-    rename work_id publication_id >>
-    drop [work_id]  -- ERROR: work_id no longer exists!
+fn cleanUser :: RawUser -> User
+fn cleanUser =
+    rename user_id id >>
+    drop [user_id]  -- ERROR: user_id no longer exists!
 ```
 
 ```
-line 16, col 5: One or more columns not found for drop
+line 4, col 5: One or more columns not found for drop
 ```
 
 ## Quick Start
@@ -54,11 +57,10 @@ line 16, col 5: One or more columns not found for drop
 idris2 --build floe.ipkg
 
 # Compile a .floe file to Python/Polars
-./build/exec/floe examples/Authorship.floe > pipeline.py
+./build/exec/floe examples/Basic.floe > pipeline.py
 
 # Run tests
-idris2 --build floe-test.ipkg
-./build/exec/floe-test
+make test
 ```
 
 ## Status

@@ -1,38 +1,28 @@
--- Example demonstrating join functionality
--- Enriches authorship data with organization names
+-- Join example: Enrich orders with customer data
 
-let openalex = "https://openalex.org/"
-
-fn stripOaPrefix :: String -> String
-fn stripOaPrefix = stripPrefix openalex
-
-schema Authorship {
-    publication_id: String,
-    author_id: String,
-    affiliated_organization_id: String,
-    author_position: String,
+schema Order {
+    order_id: String,
+    customer_id: String,
+    amount: Float,
 }
 
--- Organization nodes for enrichment via join
-schema OrgNode {
+schema Customer {
     id: String,
-    source_id: String,
     name: String,
+    email: String,
 }
 
--- Enriched edge with organization name
-schema EnrichedEdge {
-    source_id: String,
-    target_id: String,
-    org_name: String,
+schema EnrichedOrder {
+    order_id: String,
+    customer_name: String,
+    amount: Float,
 }
 
--- Global table binding for organization lookup
-let orgs = read "org_nodes.parquet" as OrgNode
+-- Load customer data for joins
+let customers = read "customers.parquet" as Customer
 
--- Extract AFFILIATED_WITH edges (authorship -> organization)
--- Uses join to enrich with organization data
-fn affiliatedWith :: Authorship -> EnrichedEdge
-fn affiliatedWith =
-    join orgs on .affiliated_organization_id == .source_id
-    >> map { source_id: .publication_id, target_id: .id, org_name: .name }
+-- Enrich orders with customer names
+fn enrichOrders :: Order -> EnrichedOrder
+fn enrichOrders =
+    join customers on .customer_id == .id
+    >> map { order_id: .order_id, customer_name: .name, amount: .amount }
