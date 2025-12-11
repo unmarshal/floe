@@ -20,11 +20,11 @@ cd tests && uv run run_tests.py
 
 # Clean build artifacts and test outputs
 make clean
-```
+```idris
 
 ## Project Structure
 
-```
+```idris
 floe/
 ├── floe.ipkg              # Main compiler package
 ├── floe-test.ipkg         # Test package
@@ -58,21 +58,21 @@ floe/
     ├── if_else/                # If-then-else expressions test
     ├── if_else_nullable/       # If-then-else with nullable columns test
     └── join_enriches_orders/   # Join integration test
-```
+```idris
 
 ## Architecture
 
-```
+```idris
 .floe source → Parser → Surface AST → Elaboration → Typed IR → Python Codegen
                                            ↓
                                      (errors with source locations)
-```
+```idris
 
 The Typed IR uses dependent types to encode schema correctness. When elaboration succeeds, Idris has *proven* the pipeline is valid.
 
 ## DSL Syntax
 
-```
+```idris
 -- Schema definitions
 schema RawUser {
     user_id: String,
@@ -125,7 +125,7 @@ let labelProducts : Product -> LabeledProduct =
         price_tier: if .price > minPrice then "premium" else "budget",
         availability: if .in_stock then "available" else "out of stock"
     }
-```
+```idris
 
 ### Binding Types
 
@@ -186,7 +186,7 @@ The Typed IR carries proofs that operations are valid. These proofs are erased a
 data HasCol : Schema -> String -> Ty -> Type where
   Here  : HasCol (MkField nm t :: rest) nm t
   There : HasCol rest nm t -> HasCol (f :: rest) nm t
-```
+```idris
 
 A value of type `HasCol s "user_id" TStr` is *evidence* that schema `s` contains a string field "user_id".
 
@@ -196,7 +196,7 @@ A value of type `HasCol s "user_id" TStr` is *evidence* that schema `s` contains
 data AllHasCol : Schema -> List String -> Type where
   AllNil  : AllHasCol s []
   AllCons : {0 t : Ty} -> HasCol s nm t -> AllHasCol s nms -> AllHasCol s (nm :: nms)
-```
+```idris
 
 Used by `Drop`, `Select`, `UniqueBy` to prove all referenced columns exist.
 
@@ -206,7 +206,7 @@ Used by `Drop`, `Select`, `UniqueBy` to prove all referenced columns exist.
 data AllHasColTy : Schema -> List String -> Ty -> Type where
   AllTyNil  : AllHasColTy s [] t
   AllTyCons : HasCol s nm t -> AllHasColTy s nms t -> AllHasColTy s (nm :: nms) t
-```
+```idris
 
 Used by `Transform` to prove all columns being transformed have the expected type (e.g., all are `String` for a string function).
 
@@ -216,7 +216,7 @@ Used by `Transform` to prove all columns being transformed have the expected typ
 data AllHasMaybeCol : Schema -> List String -> Type where
   AllMaybeNil  : AllHasMaybeCol s []
   AllMaybeCons : {0 t : Ty} -> HasCol s nm (TMaybe t) -> AllHasMaybeCol s nms -> AllHasMaybeCol s (nm :: nms)
-```
+```idris
 
 Used by `Require` to prove all columns being required are actually `Maybe T` (so they can be refined to `T`).
 
@@ -246,7 +246,7 @@ data FilterExpr : Schema -> Type where
   -- Logical combinators
   FAnd : FilterExpr s -> FilterExpr s -> FilterExpr s
   FOr : FilterExpr s -> FilterExpr s -> FilterExpr s
-```
+```idris
 
 Used by `Filter`. Key insight: `FCompareCols` shares type variable `t` between both proofs, so Idris enforces that both columns have the same type at compile time.
 
@@ -274,7 +274,7 @@ data MapExpr : Schema -> Ty -> Type where
   MIf : (cond : FilterExpr s) -> (thenE : MapExpr s t) -> (elseE : MapExpr s t) -> MapExpr s t
   -- If-then-else with nullable condition (result type Maybe t)
   MIfNullable : (cond : FilterExpr s) -> (thenE : MapExpr s t) -> (elseE : MapExpr s t) -> MapExpr s (TMaybe t)
-```
+```idris
 
 Used by `map { field: expr }`. Key insights:
 - Both `MIf` and `MIfNullable` share type variable `t` for both branches, ensuring type consistency
@@ -303,7 +303,7 @@ elabExpr s (SCol sp nm) =
   case hasField s nm of
     Yes (t ** pf) => Right (t ** Col nm pf)
     No _ => fail sp "Unknown column '\{nm}'"
-```
+```idris
 
 If `hasField` returns a proof, we construct the typed expression. Otherwise, we produce an error with source location.
 
