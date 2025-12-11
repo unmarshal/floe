@@ -18,9 +18,11 @@
     "queries/*",
     "src/**"
   ],
+  "author": "Marshall Beddoe <unmarshal@gmail.com>",
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-username/tree-sitter-floe"
+    "url": "https://github.com/unmarshal/floe",
+    "directory": "tree-sitter-floe"
   },
   "license": "MIT",
   "dependencies": {
