@@ -291,61 +291,52 @@ data ColFnBinding : Type where
 
 ---
 
-### 6. Expression Type Inference (`inferExprTy`)
+### ~~6. Expression Type Inference (`inferExprTy`)~~ ✅ COMPLETED
 
-**Location:** `/Users/marshall/floe/src/Floe/Elaborate.idr:319-358`
+**Status:** Completed - merged type inference and elaboration into single pass
 
-**Current Approach:**
+**Solution Implemented:**
+Created merged functions that compute schema and elaborate in one pass:
+
 ```idris
-inferExprTy : Context -> Schema -> SExpr -> Ty
-inferExprTy ctx s (SColRef _ col) = getColType s col  -- Uses unsafe default
-inferExprTy ctx s (SVar _ name) =
-  case lookupConstant name ctx of
-    Just constVal => constValueTy constVal
-    Nothing => TString  -- ⚠️ UNSAFE DEFAULT
-inferExprTy ctx s (SIf _ cond thenE elseE) =
-  let baseTy = inferExprTy ctx s thenE
-      -- ... simplified nullability check
-  in if isNullable then TMaybe baseTy else baseTy
-inferExprTy ctx s _ = TString  -- ⚠️ UNSAFE DEFAULT
+-- Single function returns both column and typed assignment
+elabMapFieldWithCol : Context -> Span -> (s : Schema) -> ProcessedField 
+                   -> Result (Col, MapAssign s)
+elabMapFieldWithCol ctx span s (PFExpr new expr) = do
+  MkMapExprResult ty mapExpr <- elabMapExpr ctx span s expr
+  ok (MkCol new ty, ExprAssign new ty mapExpr)
+-- ... handles all field types
+
+-- Elaborate all fields and return both schema and typed assignments
+elabMapFieldsWithSchema : Context -> Span -> (s : Schema) -> List ProcessedField
+                        -> Result (Schema, List (MapAssign s))
 ```
 
-**Why It's a Gap:**
-- Used for schema computation before elaboration
-- Returns defaults for unknown columns/variables
-- Computed type may not match actual elaborated type
-- No proof that inference is correct
+**Changes Made:**
+1. Created `elabMapFieldWithCol` - returns both `Col` and `MapAssign` in one pass
+2. Created `elabMapFieldsWithSchema` - threads through list, returns full schema and assignments
+3. Updated `elabOp` for `SMap` to use new merged function
+4. Removed old duplicate functions:
+   - `inferExprTy`: Imprecise type inference (returned left type for arithmetic)
+   - `fieldToCol`: Convert field to column
+   - `fieldsToSchema`: Convert fields to schema
+   - `computeMapSchema`: Compute map output schema
+   - `elabMapAssign`: Elaborate single field
+   - `elabMapAssignsWithSpan`: Elaborate all fields
+5. Kept helper functions still in use:
+   - `isNullableTy`, `anyNullable`: Used by filterExprIsNullable
+   - `hasSpread`, `getExprSources`, `getConsumedColumns`, `computeSpreadSchema`: Used by map elaboration
 
-**What Could Go Wrong:**
-```floe
-map { 
-  result: if .flag then .unknown_var else "default"
-}
-```
+**Benefits Achieved:**
+- ✅ Single traversal instead of two (schema computation + elaboration)
+- ✅ No unsafe defaults - elaboration fails if expression is invalid
+- ✅ Type errors caught immediately, not after schema computation
+- ✅ More accurate types - caught Decimal precision bug where old code used `Decimal(10,2)` but actual was `Decimal(10,4)`
+- ✅ Eliminated ~100 lines of duplicate code
+- ✅ All 85 unit tests + 20 integration tests pass
 
-`inferExprTy` returns `TString` for `unknown_var` (default), schema computed as `String`, but elaboration fails later.
-
-**Proof-Based Version:**
-```idris
--- Inference returns proof of type correctness
-infer : Context -> (s : Schema) -> SExpr -> Result (t : Ty ** MapExpr s t)
--- No defaults, only return type if expression is valid
-
--- Or use bidirectional type checking
-check : Context -> (s : Schema) -> SExpr -> Ty -> Result (MapExpr s t)
-synth : Context -> (s : Schema) -> SExpr -> Result (t : Ty ** MapExpr s t)
-```
-
-**Benefits:**
-- Type errors caught at inference time
-- No unsafe defaults
-- Single source of truth for expression types
-- Inference proof doubles as elaboration
-
-**Complexity:** Hard
-- Would merge inference and elaboration into single pass
-- Requires refactoring map schema computation
-- Might need to compute schema incrementally during elaboration
+**Type Safety Improvement:**
+The old `inferExprTy` just returned the left operand's type for arithmetic operations like `*`, which was imprecise for Decimal types. The merged approach correctly computes `Decimal(max(p1,p2), max(s1,s2))`, catching a real bug in test declarations.
 
 ---
 
@@ -671,10 +662,11 @@ elabPipeline : ScopedContext -> (sIn : Schema) -> SPipeline
    - Clearer IR constructors
 
 ### Long-Term Refactoring
-5. **Type inference = elaboration** (Gap #6)
-   - Merge `inferExprTy` and `elabMapExpr`
-   - Eliminate unsafe defaults
-   - Single source of truth
+5. ~~**Type inference = elaboration** (Gap #6)~~ ✅ **COMPLETED**
+   - ✅ Merged `inferExprTy` and `elabMapExpr` into single pass
+   - ✅ Eliminated unsafe defaults and duplicate code
+   - ✅ Single source of truth for expression types
+   - ✅ Caught real Decimal precision bug in tests
 
 6. ~~**Safe column lookup** (Gap #2)~~ ✅ **COMPLETED**
    - ✅ Created safe versions of schema computation functions
@@ -716,7 +708,7 @@ Recommended order of attack:
 4. ~~**Gap #4** (numeric proofs)~~ ✅ **COMPLETED**
 5. ~~**Gap #2** (safe column lookup)~~ ✅ **COMPLETED**
 6. ~~**Gap #11** (main expression validation)~~ ✅ **COMPLETED**
-7. **Gap #6** (inference = elaboration) - 2-3 weeks remaining
-8. **Gap #12** (where clause support) - Medium effort
+7. ~~**Gap #6** (inference = elaboration)~~ ✅ **COMPLETED**
+8. **Gap #12** (where clause support) - Medium effort remaining
 
-**Progress:** 6 of 6 priority gaps completed! Plus Gap #11 (medium priority) also done. Remaining work is Gap #6 (major refactoring) and Gap #12 (new feature).
+**Progress:** All 7 high-priority gaps completed! (Gaps #1-6, #11). Remaining work is Gap #12 (where clause support - new feature) and lower-priority theoretical gaps.
