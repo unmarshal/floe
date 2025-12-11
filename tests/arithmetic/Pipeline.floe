@@ -2,16 +2,16 @@
 
 schema Product {
     name: String,
-    price: Int64,
-    quantity: Int64,
-    discount: Int64,
+    price: Int,
+    quantity: Int,
+    discount: Int,
 }
 
 schema OrderSummary {
     name: String,
-    total: Int64,
-    discounted_price: Int64,
-    profit_margin: Int64,
+    total: Int,
+    discounted_price: Int,
+    profit_margin: Int,
 }
 
 fn calculateTotals :: Product -> OrderSummary

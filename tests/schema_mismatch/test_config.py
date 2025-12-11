@@ -24,4 +24,4 @@ def compare_output(actual, expected):
 
 # Mark this test as expecting failure
 expect_failure = True
-expected_error = "Column 'amount': expected Decimal"
+expected_error = "Column 'amount': expected decimal"

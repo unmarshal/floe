@@ -66,10 +66,10 @@ data FilterExpr : Schema -> Type where
                -> (0 prf1 : HasCol s col1 t) -> (0 prf2 : HasCol s col2 t) -> FilterExpr s
   -- Comparison with integer literal
   FCompareInt : (col : String) -> (op : CmpOp) -> (val : Integer)
-              -> (0 prf : HasCol s col TInt64) -> FilterExpr s
+              -> (0 prf : HasCol s col TInt) -> FilterExpr s
   -- Comparison with integer literal (nullable column)
   FCompareIntMaybe : (col : String) -> (op : CmpOp) -> (val : Integer)
-              -> (0 prf : HasCol s col (TMaybe TInt64)) -> FilterExpr s
+              -> (0 prf : HasCol s col (TMaybe TInt)) -> FilterExpr s
   -- Logical AND
   FAnd : FilterExpr s -> FilterExpr s -> FilterExpr s
   -- Logical OR
@@ -87,7 +87,7 @@ data MapExpr : Schema -> Ty -> Type where
   -- String literal
   MStrLit : String -> MapExpr s TString
   -- Integer literal
-  MIntLit : Integer -> MapExpr s TInt64
+  MIntLit : Integer -> MapExpr s TInt
   -- If-then-else with non-nullable condition
   -- Both branches must have same type t, condition must be Bool (non-nullable)
   MIf : (cond : FilterExpr s) -> (thenE : MapExpr s t) -> (elseE : MapExpr s t) -> MapExpr s t

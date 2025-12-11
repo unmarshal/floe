@@ -244,7 +244,7 @@ fn t = transform [x] stripHttp
 testCodegenChain : TestResult
 testCodegenChain =
   let src = """
-schema A { old: String, extra: Int64, }
+schema A { old: String, extra: Int, }
 schema B { new: String, }
 fn t :: A -> B
 fn t = rename old new >> drop [extra]
@@ -352,8 +352,8 @@ fn t = transform [name] normalize
 testCodegenFilterIntComparison : TestResult
 testCodegenFilterIntComparison =
   let src = """
-schema A { age: Int64, name: String, }
-schema B { age: Int64, name: String, }
+schema A { age: Int, name: String, }
+schema B { age: Int, name: String, }
 fn t :: A -> B
 fn t = filter .age > 18
 """
@@ -382,8 +382,8 @@ fn t = filter .status == "active"
 testCodegenFilterColumnComparison : TestResult
 testCodegenFilterColumnComparison =
   let src = """
-schema A { x: Int64, y: Int64, }
-schema B { x: Int64, y: Int64, }
+schema A { x: Int, y: Int, }
+schema B { x: Int, y: Int, }
 fn t :: A -> B
 fn t = filter .x < .y
 """

@@ -1,13 +1,13 @@
 schema Product {
     name: String,
-    price: Int64,
+    price: Int,
     category: String,
     in_stock: Bool,
 }
 
 schema AffordableProduct {
     name: String,
-    price: Int64,
+    price: Int,
     category: String,
     in_stock: Bool,
 }

@@ -11,7 +11,7 @@ schema CleanUrl {
     url: String,
     name: String,
     name_upper: String,
-    name_len: Int64,
+    name_len: Int,
 }
 
 fn normalizeUrl :: String -> String

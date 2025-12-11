@@ -10,7 +10,7 @@ import Decidable.Equality
 
 public export
 data Ty
-  = TInt64
+  = TInt
   | TFloat
   | TDecimal Nat Nat  -- precision, scale
   | TString
@@ -20,7 +20,7 @@ data Ty
 
 public export
 Eq Ty where
-  TInt64 == TInt64 = True
+  TInt == TInt = True
   TFloat == TFloat = True
   TDecimal p1 s1 == TDecimal p2 s2 = p1 == p2 && s1 == s2
   TString == TString = True
@@ -31,7 +31,7 @@ Eq Ty where
 
 public export
 Show Ty where
-  show TInt64 = "Int64"
+  show TInt = "Int"
   show TFloat = "Float"
   show (TDecimal p s) = "Decimal(" ++ show p ++ ", " ++ show s ++ ")"
   show TString = "String"
@@ -41,7 +41,7 @@ Show Ty where
 
 public export
 DecEq Ty where
-  decEq TInt64 TInt64 = Yes Refl
+  decEq TInt TInt = Yes Refl
   decEq TFloat TFloat = Yes Refl
   decEq (TDecimal p1 s1) (TDecimal p2 s2) = case (decEq p1 p2, decEq s1 s2) of
     (Yes Refl, Yes Refl) => Yes Refl
@@ -55,50 +55,50 @@ DecEq Ty where
   decEq (TMaybe a) (TMaybe b) = case decEq a b of
     Yes Refl => Yes Refl
     No contra => No $ \Refl => contra Refl
-  -- TInt64 vs others
-  decEq TInt64 TFloat = No $ \Refl impossible
-  decEq TInt64 (TDecimal _ _) = No $ \Refl impossible
-  decEq TInt64 TString = No $ \Refl impossible
-  decEq TInt64 TBool = No $ \Refl impossible
-  decEq TInt64 (TList _) = No $ \Refl impossible
-  decEq TInt64 (TMaybe _) = No $ \Refl impossible
+  -- TInt vs others
+  decEq TInt TFloat = No $ \Refl impossible
+  decEq TInt (TDecimal _ _) = No $ \Refl impossible
+  decEq TInt TString = No $ \Refl impossible
+  decEq TInt TBool = No $ \Refl impossible
+  decEq TInt (TList _) = No $ \Refl impossible
+  decEq TInt (TMaybe _) = No $ \Refl impossible
   -- TFloat vs others
-  decEq TFloat TInt64 = No $ \Refl impossible
+  decEq TFloat TInt = No $ \Refl impossible
   decEq TFloat (TDecimal _ _) = No $ \Refl impossible
   decEq TFloat TString = No $ \Refl impossible
   decEq TFloat TBool = No $ \Refl impossible
   decEq TFloat (TList _) = No $ \Refl impossible
   decEq TFloat (TMaybe _) = No $ \Refl impossible
   -- TDecimal vs others
-  decEq (TDecimal _ _) TInt64 = No $ \Refl impossible
+  decEq (TDecimal _ _) TInt = No $ \Refl impossible
   decEq (TDecimal _ _) TFloat = No $ \Refl impossible
   decEq (TDecimal _ _) TString = No $ \Refl impossible
   decEq (TDecimal _ _) TBool = No $ \Refl impossible
   decEq (TDecimal _ _) (TList _) = No $ \Refl impossible
   decEq (TDecimal _ _) (TMaybe _) = No $ \Refl impossible
   -- TString vs others
-  decEq TString TInt64 = No $ \Refl impossible
+  decEq TString TInt = No $ \Refl impossible
   decEq TString TFloat = No $ \Refl impossible
   decEq TString (TDecimal _ _) = No $ \Refl impossible
   decEq TString TBool = No $ \Refl impossible
   decEq TString (TList _) = No $ \Refl impossible
   decEq TString (TMaybe _) = No $ \Refl impossible
   -- TBool vs others
-  decEq TBool TInt64 = No $ \Refl impossible
+  decEq TBool TInt = No $ \Refl impossible
   decEq TBool TFloat = No $ \Refl impossible
   decEq TBool (TDecimal _ _) = No $ \Refl impossible
   decEq TBool TString = No $ \Refl impossible
   decEq TBool (TList _) = No $ \Refl impossible
   decEq TBool (TMaybe _) = No $ \Refl impossible
   -- TList vs others
-  decEq (TList _) TInt64 = No $ \Refl impossible
+  decEq (TList _) TInt = No $ \Refl impossible
   decEq (TList _) TFloat = No $ \Refl impossible
   decEq (TList _) (TDecimal _ _) = No $ \Refl impossible
   decEq (TList _) TString = No $ \Refl impossible
   decEq (TList _) TBool = No $ \Refl impossible
   decEq (TList _) (TMaybe _) = No $ \Refl impossible
   -- TMaybe vs others
-  decEq (TMaybe _) TInt64 = No $ \Refl impossible
+  decEq (TMaybe _) TInt = No $ \Refl impossible
   decEq (TMaybe _) TFloat = No $ \Refl impossible
   decEq (TMaybe _) (TDecimal _ _) = No $ \Refl impossible
   decEq (TMaybe _) TString = No $ \Refl impossible

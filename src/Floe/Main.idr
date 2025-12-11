@@ -119,11 +119,23 @@ compileFile filename = do
             Nothing => pure ()  -- Schema not found, skip validation
             Just schema => do
               putStrLn $ "    _expected_schema = " ++ schemaToPolarsDict schema
-              putStrLn $ "    for _col, _dtype in _expected_schema.items():"
+              putStrLn "    _int_types = (pl.Int8, pl.Int16, pl.Int32, pl.Int64, pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64)"
+              putStrLn "    _float_types = (pl.Float32, pl.Float64)"
+              putStrLn "    def _check_type(actual, expected):"
+              putStrLn "        if expected == 'int': return actual in _int_types"
+              putStrLn "        if expected == 'float': return actual in _float_types"
+              putStrLn "        if expected == 'string': return actual == pl.String"
+              putStrLn "        if expected == 'bool': return actual == pl.Boolean"
+              putStrLn "        if expected.startswith('decimal:'):"
+              putStrLn "            parts = expected.split(':')"
+              putStrLn "            return actual == pl.Decimal(precision=int(parts[1]), scale=int(parts[2]))"
+              putStrLn "        if expected == 'list': return isinstance(actual, pl.List)"
+              putStrLn "        return False"
+              putStrLn $ "    for _col, _expected in _expected_schema.items():"
               putStrLn $ "        if _col not in df.columns:"
               putStrLn $ "            raise ValueError(f\"Missing column: {_col}\")"
-              putStrLn $ "        if df.schema[_col] != _dtype:"
-              putStrLn $ "            raise TypeError(f\"Column '{_col}': expected {_dtype}, got {df.schema[_col]}\")"
+              putStrLn $ "        if not _check_type(df.schema[_col], _expected):"
+              putStrLn $ "            raise TypeError(f\"Column '{_col}': expected {_expected}, got {df.schema[_col]}\")"
           go "df" rest
         go dfVar (SPipeThrough _ fnName :: rest) = do
           putStrLn $ "    df = " ++ fnName ++ "(df)"

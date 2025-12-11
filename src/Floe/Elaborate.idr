@@ -66,7 +66,7 @@ lookupScalarFn nm ctx = go ctx.scalarFns
 -- Returns Nothing if it's a schema name (not a scalar type)
 parseScalarTy : String -> Maybe Ty
 parseScalarTy "String" = Just TString
-parseScalarTy "Int64" = Just TInt64
+parseScalarTy "Int" = Just TInt
 parseScalarTy "Float" = Just TFloat
 parseScalarTy "Bool" = Just TBool
 parseScalarTy _ = Nothing  -- Probably a schema name
@@ -214,8 +214,8 @@ validateMapSources span s (PFExpr _ _ :: rest) =
 
 -- Determine output type of a builtin application
 builtinOutputTy : BuiltinCall -> Ty -> Ty
-builtinOutputTy BLenChars _ = TInt64  -- len_chars always returns int
-builtinOutputTy (BCast "Int64") _ = TInt64
+builtinOutputTy BLenChars _ = TInt  -- len_chars always returns int
+builtinOutputTy (BCast "Int") _ = TInt
 builtinOutputTy (BCast "Float") _ = TFloat
 builtinOutputTy (BCast "String") _ = TString
 builtinOutputTy (BCast "Bool") _ = TBool
@@ -240,7 +240,7 @@ inferExprTy : Schema -> SExpr -> Ty
 inferExprTy s (SColRef _ col) = getColType s col
 inferExprTy s (SColRefNullCheck _ col) = getColType s col
 inferExprTy s (SStrLit _ _) = TString
-inferExprTy s (SIntLit _ _) = TInt64
+inferExprTy s (SIntLit _ _) = TInt
 inferExprTy s (SIf _ cond thenE elseE) =
   -- Check if condition uses nullable columns (simplified check)
   let baseTy = inferExprTy s thenE
@@ -383,10 +383,10 @@ elabFilterExpr span s expr =
             Nothing => err (ParseError span ("Column '" ++ col2 ++ "' must have same type as '" ++ col1 ++ "'"))
             Just prf2 => ok (FCompareCols col1 op col2 prf1 prf2)
     Just (SColRef _ col, op, SIntLit _ val) =>
-      -- .col op integer (try Int64 first, then Maybe Int64)
-      case findColWithTy s col TInt64 of
+      -- .col op integer (try Int first, then Maybe Int)
+      case findColWithTy s col TInt of
         Just prf => ok (FCompareInt col op val prf)
-        Nothing => case findColWithTy s col (TMaybe TInt64) of
+        Nothing => case findColWithTy s col (TMaybe TInt) of
           Just prf => ok (FCompareIntMaybe col op val prf)
           Nothing => err (ParseError span ("Column '" ++ col ++ "' must be Int64 or Maybe Int64 for integer comparison"))
     Just (SColRef _ col, op, SStrLit _ val) =>
@@ -421,7 +421,7 @@ filterExprIsNullable s expr = anyNullable s (filterExprCols expr)
 
 -- Helper for arithmetic elaboration
 isNumericTy : Ty -> Bool
-isNumericTy TInt64 = True
+isNumericTy TInt = True
 isNumericTy TFloat = True
 isNumericTy (TDecimal _ _) = True
 isNumericTy _ = False
@@ -436,7 +436,7 @@ applyArithOp AODiv l r = MDiv l r
 -- Check if two types are compatible for arithmetic
 -- Decimals with different precision/scale are compatible
 areArithCompatible : Ty -> Ty -> Bool
-areArithCompatible TInt64 TInt64 = True
+areArithCompatible TInt TInt = True
 areArithCompatible TFloat TFloat = True
 areArithCompatible (TDecimal _ _) (TDecimal _ _) = True
 areArithCompatible _ _ = False
@@ -458,7 +458,7 @@ getIntLit _ = Nothing
 -- Create a MapExpr for a literal coerced to a given numeric type
 -- For Decimal, we use believe_me since the actual value is the same
 coerceLiteral : (s : Schema) -> Integer -> (t : Ty) -> MapExpr s t
-coerceLiteral s i TInt64 = MIntLit i
+coerceLiteral s i TInt = MIntLit i
 coerceLiteral s i TFloat = believe_me (MIntLit {s} i)  -- Polars handles int -> float
 coerceLiteral s i (TDecimal _ _) = believe_me (MIntLit {s} i)  -- Polars handles int -> decimal
 coerceLiteral s i _ = believe_me (MIntLit {s} i)  -- Fallback
@@ -519,7 +519,7 @@ elabMapExpr span s (SColRefNullCheck _ col) =
 -- String literal
 elabMapExpr span s (SStrLit _ str) = ok (MkMapExprResult TString (MStrLit str))
 -- Integer literal
-elabMapExpr span s (SIntLit _ i) = ok (MkMapExprResult TInt64 (MIntLit i))
+elabMapExpr span s (SIntLit _ i) = ok (MkMapExprResult TInt (MIntLit i))
 -- If-then-else
 elabMapExpr span s (SIf _ cond thenE elseE) = do
   -- Elaborate condition as FilterExpr

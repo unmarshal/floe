@@ -25,28 +25,29 @@ joinWith sep [x] = x
 joinWith sep (x :: xs) = x ++ sep ++ joinWith sep xs
 
 -----------------------------------------------------------
--- Type to Polars dtype
+-- Type to Polars dtype / type family
 -----------------------------------------------------------
 
--- Convert a Floe type to Polars dtype string
+-- Convert a Floe type to a type family name for validation
+-- Int accepts any integer type, Float accepts any float type
 public export
-tyToPolars : Ty -> String
-tyToPolars TInt64 = "pl.Int64"
-tyToPolars TFloat = "pl.Float64"
-tyToPolars (TDecimal p s) = "pl.Decimal(precision=" ++ show p ++ ", scale=" ++ show s ++ ")"
-tyToPolars TString = "pl.String"
-tyToPolars TBool = "pl.Boolean"
-tyToPolars (TList t) = "pl.List(" ++ tyToPolars t ++ ")"
-tyToPolars (TMaybe t) = tyToPolars t  -- Polars handles nullability separately
+tyToTypeFamily : Ty -> String
+tyToTypeFamily TInt = "int"
+tyToTypeFamily TFloat = "float"
+tyToTypeFamily (TDecimal p s) = "decimal:" ++ show p ++ ":" ++ show s
+tyToTypeFamily TString = "string"
+tyToTypeFamily TBool = "bool"
+tyToTypeFamily (TList t) = "list"
+tyToTypeFamily (TMaybe t) = tyToTypeFamily t  -- Polars handles nullability separately
 
--- Generate schema dict for validation
+-- Generate schema dict for validation (type family based)
 public export
 schemaToPolarsDict : Schema -> String
 schemaToPolarsDict [] = "{}"
 schemaToPolarsDict cols = "{" ++ joinWith ", " (map colToEntry cols) ++ "}"
   where
     colToEntry : Col -> String
-    colToEntry (MkCol name ty) = "\"" ++ name ++ "\": " ++ tyToPolars ty
+    colToEntry (MkCol name ty) = "\"" ++ name ++ "\": \"" ++ tyToTypeFamily ty ++ "\""
 
 -- Format column for Polars
 formatColExpr : String -> String

@@ -11,7 +11,7 @@ import Floe.Types
 -- Type as written in source
 public export
 data STy
-  = SInt64
+  = SInt
   | SFloat
   | SDecimal Nat Nat  -- precision, scale
   | SString
@@ -21,7 +21,7 @@ data STy
 
 public export
 Show STy where
-  show SInt64 = "Int64"
+  show SInt = "Int"
   show SFloat = "Float"
   show (SDecimal p s) = "Decimal(" ++ show p ++ ", " ++ show s ++ ")"
   show SString = "String"
@@ -31,7 +31,7 @@ Show STy where
 
 public export
 Eq STy where
-  SInt64 == SInt64 = True
+  SInt == SInt = True
   SFloat == SFloat = True
   (SDecimal p1 s1) == (SDecimal p2 s2) = p1 == p2 && s1 == s2
   SString == SString = True
@@ -43,7 +43,7 @@ Eq STy where
 -- Convert surface type to core type
 public export
 toCoreTy : STy -> Ty
-toCoreTy SInt64 = TInt64
+toCoreTy SInt = TInt
 toCoreTy SFloat = TFloat
 toCoreTy (SDecimal p s) = TDecimal p s
 toCoreTy SString = TString

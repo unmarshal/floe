@@ -85,8 +85,8 @@ fn t = select [a, c]
 testElabMap : TestResult
 testElabMap =
   let src = """
-schema A { x: String, y: Int64, }
-schema B { a: String, b: Int64, }
+schema A { x: String, y: Int, }
+schema B { a: String, b: Int, }
 fn t :: A -> B
 fn t = map { a: .x, b: .y }
 """
@@ -97,7 +97,7 @@ fn t = map { a: .x, b: .y }
 testElabChain : TestResult
 testElabChain =
   let src = """
-schema A { old: String, extra: Int64, }
+schema A { old: String, extra: Int, }
 schema B { new: String, }
 fn t :: A -> B
 fn t = rename old new >> drop [extra]
@@ -187,7 +187,7 @@ fn t = select [x]
 testElabJoinTypeMismatch : TestResult
 testElabJoinTypeMismatch =
   let src = """
-schema User { id: Int64, name: String, }
+schema User { id: Int, name: String, }
 schema Order { oid: String, user_id: String, }
 schema R { oid: String, name: String, }
 let users = read "users.parquet" as User
@@ -252,8 +252,8 @@ fn t = join nonexistent on .x == .x
 testElabFilterIntComparison : TestResult
 testElabFilterIntComparison =
   let src = """
-schema A { age: Int64, name: String, }
-schema B { age: Int64, name: String, }
+schema A { age: Int, name: String, }
+schema B { age: Int, name: String, }
 fn t :: A -> B
 fn t = filter .age > 18
 """
@@ -276,8 +276,8 @@ fn t = filter .status == "active"
 testElabFilterColumnComparison : TestResult
 testElabFilterColumnComparison =
   let src = """
-schema A { x: Int64, y: Int64, }
-schema B { x: Int64, y: Int64, }
+schema A { x: Int, y: Int, }
+schema B { x: Int, y: Int, }
 fn t :: A -> B
 fn t = filter .x < .y
 """
@@ -305,15 +305,15 @@ schema B { age: String, name: String, }
 fn t :: A -> B
 fn t = filter .age > 18
 """
-  in case elabExpectError src "Int64" of
+  in case elabExpectError src "Int" of
        Right () => pass "elab error: filter comparison type mismatch"
        Left e => fail "elab error: filter comparison type mismatch" e
 
 testElabFilterColumnComparisonTypeMismatch : TestResult
 testElabFilterColumnComparisonTypeMismatch =
   let src = """
-schema A { x: Int64, y: String, }
-schema B { x: Int64, y: String, }
+schema A { x: Int, y: String, }
+schema B { x: Int, y: String, }
 fn t :: A -> B
 fn t = filter .x == .y
 """

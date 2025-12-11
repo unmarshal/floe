@@ -3,13 +3,13 @@
 schema UserInput {
     id: String,
     name: Maybe String,
-    age: Maybe Int64,
+    age: Maybe Int,
 }
 
 schema UserComplete {
     id: String,
     name: String,
-    age: Int64,
+    age: Int,
 }
 
 fn filterComplete :: UserInput -> UserComplete

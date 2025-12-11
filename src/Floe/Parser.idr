@@ -466,7 +466,7 @@ mutual
   pType st = do
     (name, st') <- pIdent st
     case name of
-      "Int64"  => Right (SInt64, st')
+      "Int"    => Right (SInt, st')
       "Float"  => Right (SFloat, st')
       "Decimal" => do
         -- Decimal(precision, scale)
@@ -993,7 +993,7 @@ pLegacyTransform st = do
 -- Check if a type name is a primitive type (for column functions)
 isPrimitiveType : String -> Bool
 isPrimitiveType "String" = True
-isPrimitiveType "Int64" = True
+isPrimitiveType "Int" = True
 isPrimitiveType "Float" = True
 isPrimitiveType "Bool" = True
 isPrimitiveType _ = False
