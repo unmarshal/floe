@@ -1,0 +1,30 @@
+-- Test Decimal type for currency calculations
+
+schema Invoice {
+    id: String,
+    amount: Decimal(10, 2),
+    tax_rate: Decimal(5, 4),
+}
+
+schema InvoiceWithTax {
+    id: String,
+    amount: Decimal(10, 2),
+    tax_rate: Decimal(5, 4),
+    tax_amount: Decimal(10, 2),
+    total: Decimal(10, 2),
+}
+
+fn calculateTax :: Invoice -> InvoiceWithTax
+fn calculateTax =
+    map {
+        id: .id,
+        amount: .amount,
+        tax_rate: .tax_rate,
+        tax_amount: .amount * .tax_rate,
+        total: .amount + .amount * .tax_rate
+    }
+
+fn main =
+    read "input.parquet" as Invoice
+    |> calculateTax
+    sink "output.parquet"

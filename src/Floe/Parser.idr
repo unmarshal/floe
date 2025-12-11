@@ -468,6 +468,14 @@ mutual
     case name of
       "Int64"  => Right (SInt64, st')
       "Float"  => Right (SFloat, st')
+      "Decimal" => do
+        -- Decimal(precision, scale)
+        ((), st'') <- expect TLParen st'
+        (prec, st''') <- pIntLit st''
+        ((), st'''') <- expect TComma st'''
+        (scale, st''''') <- pIntLit st''''
+        ((), st'''''') <- expect TRParen st'''''
+        Right (SDecimal (fromInteger prec) (fromInteger scale), st'''''')
       "String" => Right (SString, st')
       "Bool"   => Right (SBool, st')
       "List"   => do

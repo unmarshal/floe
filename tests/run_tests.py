@@ -85,6 +85,14 @@ def run_test(test_dir: Path) -> tuple[bool, str]:
     try:
         output_df = pl.read_parquet(output_file)
 
+        # Check for custom comparison function
+        if hasattr(config, "compare_output"):
+            try:
+                config.compare_output(output_df, config.expected_output)
+                return True, "OK"
+            except AssertionError as e:
+                return False, f"Custom comparison failed: {e}"
+
         # Sort both dataframes by all columns for comparison (order may differ)
         sort_cols = list(expected_df.columns)
         expected_sorted = expected_df.sort(sort_cols)

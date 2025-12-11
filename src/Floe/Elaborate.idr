@@ -423,6 +423,7 @@ filterExprIsNullable s expr = anyNullable s (filterExprCols expr)
 isNumericTy : Ty -> Bool
 isNumericTy TInt64 = True
 isNumericTy TFloat = True
+isNumericTy (TDecimal _ _) = True
 isNumericTy _ = False
 
 -- Apply arithmetic operator to two expressions of the same type
@@ -432,6 +433,18 @@ applyArithOp AOSub l r = MSub l r
 applyArithOp AOMul l r = MMul l r
 applyArithOp AODiv l r = MDiv l r
 
+-- Check if two types are compatible for arithmetic
+-- Decimals with different precision/scale are compatible
+areArithCompatible : Ty -> Ty -> Bool
+areArithCompatible TInt64 TInt64 = True
+areArithCompatible TFloat TFloat = True
+areArithCompatible (TDecimal _ _) (TDecimal _ _) = True
+areArithCompatible _ _ = False
+
+-- Get result type for Decimal arithmetic (max precision, max scale)
+decimalResultTy : Nat -> Nat -> Nat -> Nat -> Ty
+decimalResultTy p1 s1 p2 s2 = TDecimal (max p1 p2) (max s1 s2)
+
 elabArithOp span s op left right = do
   MkMapExprResult leftTy leftExpr <- elabMapExpr span s left
   MkMapExprResult rightTy rightExpr <- elabMapExpr span s right
@@ -440,11 +453,23 @@ elabArithOp span s op left right = do
     buildArith : Span -> ArithOp -> (t1 : Ty) -> MapExpr s t1 -> (t2 : Ty) -> MapExpr s t2 -> Result (MapExprResult s)
     buildArith span op t1 e1 t2 e2 =
       case decEq t1 t2 of
-        No _ => err (ParseError span ("Arithmetic operands have different types: " ++ show t1 ++ " vs " ++ show t2))
         Yes Refl =>
           if isNumericTy t1
             then ok (MkMapExprResult t1 (applyArithOp op e1 e2))
             else err (ParseError span ("Arithmetic requires numeric types, got: " ++ show t1))
+        No _ =>
+          -- Check for Decimal with different precision/scale
+          case (t1, t2) of
+            (TDecimal p1 s1, TDecimal p2 s2) =>
+              -- Decimals are compatible - use max precision/scale for result
+              -- Polars handles Decimal arithmetic automatically, so we use believe_me
+              -- to coerce the types in the IR (codegen doesn't depend on exact types)
+              let resultTy = decimalResultTy p1 s1 p2 s2
+                  -- Coerce both expressions to result type for the IR
+                  e1' : MapExpr s resultTy = believe_me e1
+                  e2' : MapExpr s resultTy = believe_me e2
+              in ok (MkMapExprResult resultTy (applyArithOp op e1' e2'))
+            _ => err (ParseError span ("Arithmetic operands have different types: " ++ show t1 ++ " vs " ++ show t2))
 
 -- Column reference
 elabMapExpr span s (SColRef _ col) =
