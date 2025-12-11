@@ -118,6 +118,29 @@ This provides **two layers of type safety**:
 
 If a parquet file has `Decimal(38, 2)` but you declared `Decimal(10, 2)`, you get a clear error immediately rather than silent data corruption.
 
+## Operators
+
+Floe uses two composition operators with distinct purposes:
+
+**`>>` (compose)** - Combines operations into a pipeline definition:
+```haskell
+let cleanUser : RawUser -> User =
+    rename user_id id >>
+    drop [is_active] >>
+    filter .active
+```
+
+**`|>` (pipe)** - Applies data through a pipeline in `main`:
+```haskell
+main =
+    read "users.parquet" as RawUser
+    |> cleanUser
+    |> someOtherTransform
+    sink "output.parquet"
+```
+
+Think of `>>` as defining transformations (functions) and `|>` as applying data to those transformations (function application).
+
 ## Bindings
 
 All bindings require explicit type annotations using the syntax `let name : Type = value`:

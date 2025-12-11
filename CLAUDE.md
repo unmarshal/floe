@@ -82,6 +82,10 @@ schema User {
     email: String,
 }
 
+-- Operators:
+-- >> composes operations in pipeline definitions
+-- |> applies data through pipelines in main
+
 -- Pipeline bindings with type annotation
 let cleanUser : RawUser -> User =
     rename user_id id >>
