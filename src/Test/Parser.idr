@@ -286,6 +286,64 @@ schema A {
        Left e => fail "parse with comments" e
 
 -----------------------------------------------------------
+-- Underscore Restriction Tests
+-----------------------------------------------------------
+
+-- Field names CAN have underscores (external data)
+testParseFieldWithUnderscore : TestResult
+testParseFieldWithUnderscore =
+  let src = """
+schema Data {
+    user_id: String,
+    first_name: String,
+}
+"""
+      check = \p => case firstSchema p of
+                      Just s => length s.cols == 2
+                      Nothing => False
+  in case parseAndCheck src check of
+       Right () => pass "parse field with underscore"
+       Left e => fail "parse field with underscore" e
+
+-- Schema names CANNOT have underscores
+testParseSchemaNameWithUnderscore : TestResult
+testParseSchemaNameWithUnderscore =
+  let src = "schema My_Schema { x: String, }"
+  in case parseFloe src of
+       Left _ => pass "reject schema name with underscore"
+       Right _ => fail "reject schema name with underscore" "Should have rejected underscore in schema name"
+
+-- Function names CANNOT have underscores
+testParseFnNameWithUnderscore : TestResult
+testParseFnNameWithUnderscore =
+  let src = """
+schema A { x: String, }
+fn my_fn :: A -> A
+fn my_fn = select [x]
+"""
+  in case parseFloe src of
+       Left _ => pass "reject fn name with underscore"
+       Right _ => fail "reject fn name with underscore" "Should have rejected underscore in function name"
+
+-- Drop operation with underscored field names should work
+testParseDropWithUnderscores : TestResult
+testParseDropWithUnderscores =
+  let src = """
+schema A { user_id: String, first_name: String, }
+schema B { user_id: String, }
+fn t :: A -> B
+fn t = drop [first_name]
+"""
+      check = \p => case firstLetBind p of
+                      Just b => case b.pipeline of
+                        SPipe _ [SDrop _ cols] _ => cols == ["first_name"]
+                        _ => False
+                      Nothing => False
+  in case parseAndCheck src check of
+       Right () => pass "parse drop with underscored fields"
+       Left e => fail "parse drop with underscored fields" e
+
+-----------------------------------------------------------
 -- Test Suite
 -----------------------------------------------------------
 
@@ -306,4 +364,8 @@ parserTests = suite "Parser Tests"
   , testParseMainSimple
   , testParseMainWithPipe
   , testParseWithComments
+  , testParseFieldWithUnderscore
+  , testParseSchemaNameWithUnderscore
+  , testParseFnNameWithUnderscore
+  , testParseDropWithUnderscores
   ]

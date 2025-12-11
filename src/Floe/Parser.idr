@@ -7,6 +7,7 @@ import Floe.Surface
 import Floe.Error
 
 import Data.List
+import Data.Maybe
 import Data.String
 
 -----------------------------------------------------------
@@ -321,12 +322,26 @@ expect expected st =
        then Right ((), advanceP st)
        else Left (ParseError tok.span ("Expected " ++ show expected ++ ", got " ++ show tok.tok))
 
--- Get identifier
+-- Check if identifier contains underscore
+hasUnderscore : String -> Bool
+hasUnderscore s = isJust (find (== '_') (unpack s))
+
+-- Get field identifier (allows underscores - for schema field names from external data)
+pFieldIdent : Parser String
+pFieldIdent st =
+  let tok = currentTok st
+  in case tok.tok of
+       TIdent s => Right (s, advanceP st)
+       _ => Left (ParseError tok.span ("Expected field name, got " ++ show tok.tok))
+
+-- Get identifier (no underscores - for function/schema/variable names)
 pIdent : Parser String
 pIdent st =
   let tok = currentTok st
   in case tok.tok of
-       TIdent s => Right (s, advanceP st)
+       TIdent s => if hasUnderscore s
+                     then Left (ParseError tok.span ("Identifier '" ++ s ++ "' contains underscore; use camelCase instead"))
+                     else Right (s, advanceP st)
        _ => Left (ParseError tok.span ("Expected identifier, got " ++ show tok.tok))
 
 -- Get string literal
@@ -412,7 +427,7 @@ mutual
 pCol : Parser SCol
 pCol st = do
   (sp, st) <- pSpan st
-  (name, st) <- pIdent st
+  (name, st) <- pFieldIdent st  -- field names can have underscores (external data)
   ((), st) <- expect TColon st
   (ty, st) <- pType st
   ((), st) <- pOptComma st
@@ -437,7 +452,7 @@ pColRef : Parser SExpr
 pColRef st = do
   (sp, st) <- pSpan st
   ((), st) <- expect TDot st
-  (name, st) <- pIdent st
+  (name, st) <- pFieldIdent st  -- field names can have underscores (external data)
   -- Check for ? (null check)
   if isToken TQuestion st
     then Right (SColRefNullCheck sp name, advanceP st)
@@ -452,20 +467,21 @@ pColRefList st = do
   ((), st) <- expect TRBracket st
   Right (first :: rest, st)
 
--- Simple column name list (for legacy ops): [a, b, c] or a, b, c
-pIdentListBracketed : Parser (List String)
-pIdentListBracketed st = do
+-- Field name list in brackets (for ops like drop, select, require): [a, b, c]
+-- Field names can have underscores since they come from external data
+pFieldListBracketed : Parser (List String)
+pFieldListBracketed st = do
   ((), st) <- expect TLBracket st
-  (first, st) <- pIdent st
-  (rest, st) <- pMany (\s => do ((), s) <- expect TComma s; pIdent s) st
+  (first, st) <- pFieldIdent st
+  (rest, st) <- pMany (\s => do ((), s) <- expect TComma s; pFieldIdent s) st
   ((), st) <- expect TRBracket st
   Right (first :: rest, st)
 
--- For legacy: comma separated idents without brackets
-pIdentListComma : Parser (List String)
-pIdentListComma st = do
-  (first, st) <- pIdent st
-  (rest, st) <- pMany (\s => do ((), s) <- expect TComma s; pIdent s) st
+-- Comma separated field names without brackets
+pFieldListComma : Parser (List String)
+pFieldListComma st = do
+  (first, st) <- pFieldIdent st
+  (rest, st) <- pMany (\s => do ((), s) <- expect TComma s; pFieldIdent s) st
   Right (first :: rest, st)
 
 -- List of all builtin names for lookahead (needed before mutual block)
@@ -558,7 +574,7 @@ mutual
 pMapField : Parser SMapField
 pMapField st = do
   (sp, st) <- pSpan st
-  (name, st) <- pIdent st
+  (name, st) <- pFieldIdent st  -- output field names can have underscores (external data)
   ((), st) <- expect TColon st
   (expr, st) <- pExpr st
   ((), st) <- pOptComma st
@@ -574,32 +590,32 @@ pOp st = do
   (kw, st) <- pIdent st
   case kw of
     "rename" => do
-      (old, st) <- pIdent st
-      (new, st) <- pIdent st
+      (old, st) <- pFieldIdent st  -- field names can have underscores
+      (new, st) <- pFieldIdent st  -- field names can have underscores
       Right (SRename sp old new, st)
     "drop" => do
       if isToken TLBracket st
         then do
-          (cols, st) <- pIdentListBracketed st
+          (cols, st) <- pFieldListBracketed st
           Right (SDrop sp cols, st)
         else do
-          (cols, st) <- pIdentListComma st
+          (cols, st) <- pFieldListComma st
           Right (SDrop sp cols, st)
     "select" => do
       if isToken TLBracket st
         then do
-          (cols, st) <- pIdentListBracketed st
+          (cols, st) <- pFieldListBracketed st
           Right (SSelect sp cols, st)
         else do
-          (cols, st) <- pIdentListComma st
+          (cols, st) <- pFieldListComma st
           Right (SSelect sp cols, st)
     "require" => do
       if isToken TLBracket st
         then do
-          (cols, st) <- pIdentListBracketed st
+          (cols, st) <- pFieldListBracketed st
           Right (SRequire sp cols, st)
         else do
-          (cols, st) <- pIdentListComma st
+          (cols, st) <- pFieldListComma st
           Right (SRequire sp cols, st)
     "filter" => do
       (expr, st) <- pExpr st
@@ -610,21 +626,21 @@ pOp st = do
       ((), st) <- expect TRBrace st
       Right (SMap sp fields, st)
     "transform" => do
-      (cols, st) <- pIdentListBracketed st
-      (fn, st) <- pIdent st
+      (cols, st) <- pFieldListBracketed st  -- field names can have underscores
+      (fn, st) <- pIdent st                 -- function names cannot
       Right (STransform sp cols fn, st)
     "uniqueBy" => do
       (expr, st) <- pExpr st
       Right (SUniqueBy sp expr, st)
     "join" => do
       -- join table_name on .left_col == .right_col
-      (tableName, st) <- pIdent st
+      (tableName, st) <- pIdent st       -- table names cannot have underscores
       ((), st) <- expect TOn st
       ((), st) <- expect TDot st
-      (leftCol, st) <- pIdent st
+      (leftCol, st) <- pFieldIdent st    -- field names can have underscores
       ((), st) <- expect TDoubleEq st
       ((), st) <- expect TDot st
-      (rightCol, st) <- pIdent st
+      (rightCol, st) <- pFieldIdent st   -- field names can have underscores
       Right (SJoin sp tableName (MkSJoinOn leftCol rightCol), st)
     _ => Left (ParseError sp ("Unknown operation: " ++ kw))
 
