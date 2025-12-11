@@ -14,9 +14,9 @@ schema Output {
 
 let convertTypes : Input -> Output =
     map {
-        asFloat: cast Float64 .intValue,
-        asInt: cast Int64 .floatValue,
-        asString: cast String .intValue
+        asFloat: .intValue as Float64,
+        asInt: .floatValue as Int64,
+        asString: .intValue as String
     }
 
 main =

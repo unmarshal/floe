@@ -647,12 +647,6 @@ mutual
       TIdent "False" =>
         -- Boolean literal False
         Right (SBoolLit tok.span False, advanceP st)
-      TIdent "cast" => do
-        -- cast Type .col - cast with type argument (supports Decimal(p,s))
-        let st = advanceP st  -- skip 'cast'
-        (ty, st) <- pType st  -- parse the full type (e.g., Float, Decimal(10,2))
-        (arg, st) <- pColRef st   -- parse the column reference
-        Right (SBuiltinApp tok.span (BCast ty) arg, st)
       TIdent name =>
         -- Check if followed by a dot (column ref) -> function/builtin application
         let st' = advanceP st  -- skip identifier
@@ -696,10 +690,24 @@ mutual
          TSlash => Just (\sp, l, r => SDiv sp l r, advanceP st)
          _ => Nothing
 
+  -- Parse cast expression (expr as Type)
+  -- This has higher precedence than arithmetic operators
+  pCastExpr : Parser SExpr
+  pCastExpr st = do
+    (expr, st) <- pPrimaryExpr st
+    -- Check if followed by 'as' keyword
+    if isToken TAs st
+      then do
+        let sp = (currentTok st).span
+        let st' = advanceP st  -- skip 'as'
+        (ty, st'') <- pType st'
+        Right (SCast sp expr ty, st'')
+      else Right (expr, st)
+
   -- Parse multiplicative expression (left associative)
   pMulExpr : Parser SExpr
   pMulExpr st = do
-    (left, st) <- pPrimaryExpr st
+    (left, st) <- pCastExpr st
     pMulExprCont left st
     where
       pMulExprCont : SExpr -> Parser SExpr
@@ -707,7 +715,7 @@ mutual
         case pMulOp st of
           Just (mkOp, st') => do
             let sp = (currentTok st).span
-            (right, st'') <- pPrimaryExpr st'
+            (right, st'') <- pCastExpr st'
             pMulExprCont (mkOp sp left right) st''
           Nothing => Right (left, st)
 

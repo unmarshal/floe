@@ -184,6 +184,7 @@ processMapFields (SFieldAssign _ newName expr :: rest) =
        SMul _ _ _ => PFExpr newName expr :: assigns   -- Arithmetic: multiplication
        SDiv _ _ _ => PFExpr newName expr :: assigns   -- Arithmetic: division
        SConcat _ _ _ => PFExpr newName expr :: assigns -- String concatenation
+       SCast _ _ _ => PFExpr newName expr :: assigns  -- Cast expression
        _ => assigns  -- Skip unsupported expressions for now
 
 -- Extract column assignments (for schema computation)
@@ -302,6 +303,8 @@ inferExprTy ctx s (SAdd _ l r) = inferExprTy ctx s l
 inferExprTy ctx s (SSub _ l r) = inferExprTy ctx s l
 inferExprTy ctx s (SMul _ l r) = inferExprTy ctx s l
 inferExprTy ctx s (SDiv _ l r) = inferExprTy ctx s l
+-- Cast: the target type is the result type
+inferExprTy ctx s (SCast _ expr targetTy) = toCoreTy targetTy
 inferExprTy ctx s _ = TString  -- Default fallback
 
 -- Convert a single processed field to a column in the output schema
@@ -627,6 +630,14 @@ elabMapExpr ctx span s (SConcat _ left right) = do
     (Yes Refl, Yes Refl) => ok (MkMapExprResult TString (MConcat leftExpr rightExpr))
     (No _, _) => err (ParseError span ("String concatenation requires String operands, left is: " ++ show leftTy))
     (_, No _) => err (ParseError span ("String concatenation requires String operands, right is: " ++ show rightTy))
+-- Cast expression: expr as Type
+elabMapExpr ctx span s (SCast _ expr targetTy) = do
+  -- Elaborate the expression first
+  MkMapExprResult exprTy exprElaborated <- elabMapExpr ctx span s expr
+  -- Convert surface type to core type
+  let targetCoreTy = toCoreTy targetTy
+  -- Create a cast expression that converts from exprTy to targetCoreTy
+  ok (MkMapExprResult targetCoreTy (MCast targetCoreTy exprElaborated))
 -- Other expressions not yet supported in map
 elabMapExpr ctx span s expr = err (ParseError span ("Unsupported expression in map: " ++ show expr))
 

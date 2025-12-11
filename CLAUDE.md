@@ -152,29 +152,32 @@ All bindings use the unified syntax `let name : Type = value`:
 - `trim` - whitespace removal
 - `lenChars` - string length
 - `replace` - string replacement
-- `cast Type` - type casting (used in map expressions)
 
 ### Cast
 
-Use `cast` in map expressions to convert between types:
+Use the `as Type` postfix operator to cast expressions to different types. This works anywhere in expressions, including inside arithmetic:
 
 ```haskell
 schema Input {
     value: String,
     amount: Int32,
+    price: Int32,
+    quantity: Int32,
 }
 
 schema Output {
     value_float: Float64,
     value_decimal: Decimal(10, 2),
     amount_64: Int64,
+    total: Int64,
 }
 
 let convert : Input -> Output =
     map {
-        value_float: cast Float64 .value,
-        value_decimal: cast Decimal(10, 2) .value,
-        amount_64: cast Int64 .amount
+        value_float: .value as Float64,
+        value_decimal: .value as Decimal(10, 2),
+        amount_64: .amount as Int64,
+        total: .price as Int64 * .quantity as Int64
     }
 ```
 

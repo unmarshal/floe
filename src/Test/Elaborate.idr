@@ -421,7 +421,7 @@ testElabCastInMap =
   let src = """
 schema A { value: Int64, }
 schema B { asFloat: Float64, }
-let t : A -> B = map { asFloat: cast Float64 .value }
+let t : A -> B = map { asFloat: .value as Float64 }
 """
   in case elabCheck src of
        Right () => pass "elab cast in map expression"
@@ -432,11 +432,49 @@ testElabCastToDecimal =
   let src = """
 schema A { value: Float64, }
 schema B { amount: Decimal(10, 2), }
-let t : A -> B = map { amount: cast Decimal(10, 2) .value }
+let t : A -> B = map { amount: .value as Decimal(10, 2) }
 """
   in case elabCheck src of
        Right () => pass "elab cast to Decimal(p,s)"
        Left e => fail "elab cast to Decimal(p,s)" e
+
+testElabCastWithArithmetic : TestResult
+testElabCastWithArithmetic =
+  let src = """
+schema A { price: Int32, quantity: Int32, }
+schema B { total: Int64, }
+let t : A -> B = map { total: .price as Int64 * .quantity as Int64 }
+"""
+  in case elabCheck src of
+       Right () => pass "elab cast with arithmetic"
+       Left e => fail "elab cast with arithmetic" e
+
+testElabCastParenthesized : TestResult
+testElabCastParenthesized =
+  let src = """
+schema A { a: Int32, b: Int32, }
+schema B { sum: Int8, }
+let t : A -> B = map { sum: (.a + .b) as Int8 }
+"""
+  in case elabCheck src of
+       Right () => pass "elab cast parenthesized expression"
+       Left e => fail "elab cast parenthesized expression" e
+
+testElabCastMultipleTypes : TestResult
+testElabCastMultipleTypes =
+  let src = """
+schema A { i8: Int8, i16: Int16, i32: Int32, i64: Int64, }
+schema B { all64: Int64, all32: Int32, all16: Int16, all8: Int8, }
+let t : A -> B = map {
+    all64: .i8 as Int64,
+    all32: .i16 as Int32,
+    all16: .i32 as Int16,
+    all8: .i64 as Int8
+}
+"""
+  in case elabCheck src of
+       Right () => pass "elab cast multiple int types"
+       Left e => fail "elab cast multiple int types" e
 
 testElabCastColumnFnDefined : TestResult
 testElabCastColumnFnDefined =
@@ -536,6 +574,9 @@ elaborateTests = suite "Elaborate Tests"
   -- Cast and numeric type tests
   , testElabCastInMap
   , testElabCastToDecimal
+  , testElabCastWithArithmetic
+  , testElabCastParenthesized
+  , testElabCastMultipleTypes
   , testElabCastColumnFnDefined
   , testElabDecimalArithmetic
   , testElabFloatDecimalMixError

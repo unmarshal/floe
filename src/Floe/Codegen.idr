@@ -75,6 +75,24 @@ nonNullableColsList schema =
 formatColExpr : String -> String
 formatColExpr c = "pl.col(\"" ++ c ++ "\")"
 
+-- Convert core Ty to Polars type string
+tyToPolars : Ty -> String
+tyToPolars TInt8 = "Int8"
+tyToPolars TInt16 = "Int16"
+tyToPolars TInt32 = "Int32"
+tyToPolars TInt64 = "Int64"
+tyToPolars TUInt8 = "UInt8"
+tyToPolars TUInt16 = "UInt16"
+tyToPolars TUInt32 = "UInt32"
+tyToPolars TUInt64 = "UInt64"
+tyToPolars TFloat32 = "Float32"
+tyToPolars TFloat64 = "Float64"
+tyToPolars TString = "Utf8"
+tyToPolars TBool = "Boolean"
+tyToPolars (TDecimal p s) = "Decimal(precision=" ++ show p ++ ", scale=" ++ show s ++ ")"
+tyToPolars (TList inner) = "List(" ++ tyToPolars inner ++ ")"
+tyToPolars (TMaybe inner) = tyToPolars inner  -- Polars handles nullability separately
+
 -----------------------------------------------------------
 -- Builtin to Polars method call (must be before map helpers)
 -----------------------------------------------------------
@@ -197,6 +215,7 @@ mapExprToPolars (MSub l r) = "(" ++ mapExprToPolars l ++ " - " ++ mapExprToPolar
 mapExprToPolars (MMul l r) = "(" ++ mapExprToPolars l ++ " * " ++ mapExprToPolars r ++ ")"
 mapExprToPolars (MDiv l r) = "(" ++ mapExprToPolars l ++ " / " ++ mapExprToPolars r ++ ")"
 mapExprToPolars (MConcat l r) = "pl.concat_str([" ++ mapExprToPolars l ++ ", " ++ mapExprToPolars r ++ "])"
+mapExprToPolars (MCast targetTy expr) = "(" ++ mapExprToPolars expr ++ ").cast(pl." ++ tyToPolars targetTy ++ ")"
 
 -----------------------------------------------------------
 -- Map Codegen Helpers

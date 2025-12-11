@@ -1,0 +1,26 @@
+-- Test cast on parenthesized expressions
+
+schema Input {
+    a: Int32,
+    b: Int32,
+    x: Int64,
+    y: Int64,
+}
+
+schema Output {
+    sum_as_int8: Int8,
+    product_as_int16: Int16,
+    diff_as_uint32: UInt32,
+}
+
+let computeCasts : Input -> Output =
+    map {
+        sum_as_int8: (.a + .b) as Int8,
+        product_as_int16: (.a * .b) as Int16,
+        diff_as_uint32: (.x - .y) as UInt32
+    }
+
+main =
+    read "input.parquet" as Input
+    |> computeCasts
+    sink "output.parquet"

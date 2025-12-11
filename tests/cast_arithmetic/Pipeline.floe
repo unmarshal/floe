@@ -1,0 +1,23 @@
+-- Test cast with arithmetic operations
+
+schema Input {
+    price: Int32,
+    quantity: Int32,
+    discount_percent: Int32,
+}
+
+schema Output {
+    total: Int64,
+    discounted_total: Int64,
+}
+
+let computeTotals : Input -> Output =
+    map {
+        total: .price as Int64 * .quantity as Int64,
+        discounted_total: .price as Int64 * .quantity as Int64 * (100 - .discount_percent as Int64) / 100
+    }
+
+main =
+    read "input.parquet" as Input
+    |> computeTotals
+    sink "output.parquet"

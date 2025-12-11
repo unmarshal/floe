@@ -110,6 +110,8 @@ data MapExpr : Schema -> Ty -> Type where
   MDiv : MapExpr s t -> MapExpr s t -> MapExpr s t
   -- String concatenation
   MConcat : MapExpr s TString -> MapExpr s TString -> MapExpr s TString
+  -- Cast expression: converts expr from type t1 to type t2
+  MCast : (targetTy : Ty) -> MapExpr s t1 -> MapExpr s targetTy
 
 -----------------------------------------------------------
 -- Schema Transformations (type-level functions)
