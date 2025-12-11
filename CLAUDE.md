@@ -149,7 +149,20 @@ fn labelProducts =
 
 ### Types
 
-`Int64`, `Float`, `String`, `Bool`, `List T`, `Maybe T`
+`Int64`, `Float`, `Decimal(precision, scale)`, `String`, `Bool`, `List T`, `Maybe T`
+
+### Decimal Type
+
+`Decimal(p, s)` is fixed-point for currency/financial data. Key behaviors:
+
+- **Decimals with different precision/scale can be mixed** - Polars handles the conversion at runtime
+- **Decimal cannot mix with Float** - compile-time error to prevent silent precision loss
+- **Integer literals coerce to the column type** - `.amount * 2` works for any numeric type
+- **Precision tracking is advisory** - we compute a result type internally but Polars determines the actual runtime type
+
+The validation happens at two levels:
+- **Compile time**: Rejects Decimal/Float mixing, validates column existence
+- **Runtime**: Generated code validates input schema matches declared types exactly (including precision/scale)
 
 ## The Proof Mechanism
 
