@@ -54,6 +54,7 @@ data Token
   | TAnd           -- &&
   | TOr            -- ||
   | TPlus          -- +
+  | TPlusPlus      -- ++
   | TMinus         -- -
   | TStar          -- *
   | TSlash         -- /
@@ -102,6 +103,7 @@ Show Token where
   show TAnd = "&&"
   show TOr = "||"
   show TPlus = "+"
+  show TPlusPlus = "++"
   show TMinus = "-"
   show TStar = "*"
   show TSlash = "/"
@@ -150,6 +152,7 @@ Eq Token where
   TAnd == TAnd = True
   TOr == TOr = True
   TPlus == TPlus = True
+  TPlusPlus == TPlusPlus = True
   TMinus == TMinus = True
   TStar == TStar = True
   TSlash == TSlash = True
@@ -302,6 +305,7 @@ lexOne st =
     ('&' :: '&' :: _) => Right (MkTok sp TAnd, advanceN 2 st)
     ('|' :: '|' :: _) => Right (MkTok sp TOr, advanceN 2 st)
     ('|' :: '>' :: _) => Right (MkTok sp TPipeForward, advanceN 2 st)
+    ('+' :: '+' :: _) => Right (MkTok sp TPlusPlus, advanceN 2 st)
     ('+' :: _) => Right (MkTok sp TPlus, advance st)
     ('*' :: _) => Right (MkTok sp TStar, advance st)
     ('/' :: _) => Right (MkTok sp TSlash, advance st)
@@ -643,12 +647,13 @@ mutual
             pMulExprCont (mkOp sp left right) st''
           Nothing => Right (left, st)
 
-  -- Parse additive operator (+ -)
+  -- Parse additive operator (+ - ++)
   pAddOp : ParseState -> Maybe (Span -> SExpr -> SExpr -> SExpr, ParseState)
   pAddOp st =
     let tok = currentTok st
     in case tok.tok of
          TPlus => Just (\sp, l, r => SAdd sp l r, advanceP st)
+         TPlusPlus => Just (\sp, l, r => SConcat sp l r, advanceP st)
          TMinus => Just (\sp, l, r => SSub sp l r, advanceP st)
          _ => Nothing
 

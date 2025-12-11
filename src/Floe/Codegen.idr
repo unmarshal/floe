@@ -49,6 +49,20 @@ schemaToPolarsDict cols = "{" ++ joinWith ", " (map colToEntry cols) ++ "}"
     colToEntry : Col -> String
     colToEntry (MkCol name ty) = "\"" ++ name ++ "\": \"" ++ tyToTypeFamily ty ++ "\""
 
+-- Get list of non-nullable column names (for strict null validation)
+public export
+nonNullableCols : Schema -> List String
+nonNullableCols [] = []
+nonNullableCols (MkCol name (TMaybe _) :: rest) = nonNullableCols rest
+nonNullableCols (MkCol name _ :: rest) = name :: nonNullableCols rest
+
+-- Generate Python list of non-nullable column names
+public export
+nonNullableColsList : Schema -> String
+nonNullableColsList schema =
+  let cols = nonNullableCols schema
+  in "[" ++ joinWith ", " (map quote cols) ++ "]"
+
 -- Format column for Polars
 formatColExpr : String -> String
 formatColExpr c = "pl.col(\"" ++ c ++ "\")"
@@ -150,6 +164,7 @@ mapExprToPolars (MAdd l r) = "(" ++ mapExprToPolars l ++ " + " ++ mapExprToPolar
 mapExprToPolars (MSub l r) = "(" ++ mapExprToPolars l ++ " - " ++ mapExprToPolars r ++ ")"
 mapExprToPolars (MMul l r) = "(" ++ mapExprToPolars l ++ " * " ++ mapExprToPolars r ++ ")"
 mapExprToPolars (MDiv l r) = "(" ++ mapExprToPolars l ++ " / " ++ mapExprToPolars r ++ ")"
+mapExprToPolars (MConcat l r) = "pl.concat_str([" ++ mapExprToPolars l ++ ", " ++ mapExprToPolars r ++ "])"
 
 -----------------------------------------------------------
 -- Map Codegen Helpers

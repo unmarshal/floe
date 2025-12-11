@@ -11,6 +11,8 @@ modules = Floe.Types
         , Floe.Elaborate
         , Floe.Codegen
         , Floe.Parser
+        , Floe.Backend
+        , Floe.Backend.PolarsPython
         , Floe.Main
 
 main = Floe.Main

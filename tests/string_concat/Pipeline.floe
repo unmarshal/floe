@@ -1,0 +1,20 @@
+-- Test string concatenation with ++
+
+schema Input {
+    first_name: String,
+    last_name: String,
+    title: String,
+}
+
+schema Output {
+    full_name: String,
+    greeting: String,
+}
+
+fn transform :: Input -> Output
+fn transform = map {
+    full_name: .first_name ++ " " ++ .last_name,
+    greeting: "Hello, " ++ .title ++ " " ++ .last_name,
+}
+
+fn main = read "input.parquet" as Input |> transform sink "output.parquet"

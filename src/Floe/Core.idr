@@ -99,6 +99,8 @@ data MapExpr : Schema -> Ty -> Type where
   MSub : MapExpr s t -> MapExpr s t -> MapExpr s t
   MMul : MapExpr s t -> MapExpr s t -> MapExpr s t
   MDiv : MapExpr s t -> MapExpr s t -> MapExpr s t
+  -- String concatenation
+  MConcat : MapExpr s TString -> MapExpr s TString -> MapExpr s TString
 
 -----------------------------------------------------------
 -- Schema Transformations (type-level functions)

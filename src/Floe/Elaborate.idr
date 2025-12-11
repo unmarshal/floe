@@ -163,6 +163,7 @@ processMapFields (SFieldAssign _ newName expr :: rest) =
        SSub _ _ _ => PFExpr newName expr :: assigns   -- Arithmetic: subtraction
        SMul _ _ _ => PFExpr newName expr :: assigns   -- Arithmetic: multiplication
        SDiv _ _ _ => PFExpr newName expr :: assigns   -- Arithmetic: division
+       SConcat _ _ _ => PFExpr newName expr :: assigns -- String concatenation
        _ => assigns  -- Skip unsupported expressions for now
 
 -- Extract column assignments (for schema computation)
@@ -546,6 +547,13 @@ elabMapExpr span s (SAdd _ left right) = elabArithOp span s AOAdd left right
 elabMapExpr span s (SSub _ left right) = elabArithOp span s AOSub left right
 elabMapExpr span s (SMul _ left right) = elabArithOp span s AOMul left right
 elabMapExpr span s (SDiv _ left right) = elabArithOp span s AODiv left right
+elabMapExpr span s (SConcat _ left right) = do
+  MkMapExprResult leftTy leftExpr <- elabMapExpr span s left
+  MkMapExprResult rightTy rightExpr <- elabMapExpr span s right
+  case (decEq leftTy TString, decEq rightTy TString) of
+    (Yes Refl, Yes Refl) => ok (MkMapExprResult TString (MConcat leftExpr rightExpr))
+    (No _, _) => err (ParseError span ("String concatenation requires String operands, left is: " ++ show leftTy))
+    (_, No _) => err (ParseError span ("String concatenation requires String operands, right is: " ++ show rightTy))
 -- Other expressions not yet supported in map
 elabMapExpr span s expr = err (ParseError span ("Unsupported expression in map: " ++ show expr))
 

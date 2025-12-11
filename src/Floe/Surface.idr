@@ -135,6 +135,7 @@ data SExpr
   | SSub Span SExpr SExpr            -- expr - expr
   | SMul Span SExpr SExpr            -- expr * expr
   | SDiv Span SExpr SExpr            -- expr / expr
+  | SConcat Span SExpr SExpr         -- expr ++ expr (string concatenation)
 
 public export covering
 Show SExpr where
@@ -160,6 +161,7 @@ Show SExpr where
   show (SSub _ l r) = "(" ++ show l ++ " - " ++ show r ++ ")"
   show (SMul _ l r) = "(" ++ show l ++ " * " ++ show r ++ ")"
   show (SDiv _ l r) = "(" ++ show l ++ " / " ++ show r ++ ")"
+  show (SConcat _ l r) = "(" ++ show l ++ " ++ " ++ show r ++ ")"
 
 public export
 exprSpan : SExpr -> Span
@@ -185,6 +187,7 @@ exprSpan (SAdd s _ _) = s
 exprSpan (SSub s _ _) = s
 exprSpan (SMul s _ _) = s
 exprSpan (SDiv s _ _) = s
+exprSpan (SConcat s _ _) = s
 
 -----------------------------------------------------------
 -- Map field specifications

@@ -1,0 +1,16 @@
+-- Test that non-Maybe columns reject nulls at runtime
+
+schema Input {
+    name: String,
+    age: Int,
+}
+
+schema Output {
+    name: String,
+    age: Int,
+}
+
+fn transform :: Input -> Output
+fn transform = select [name, age]
+
+fn main = read "input.parquet" as Input |> transform sink "output.parquet"
