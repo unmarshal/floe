@@ -78,6 +78,11 @@ select [col1, col2]
 -- Filter rows where boolean column is true
 filter .is_active
 
+-- Filter with comparison expressions
+filter .age > 18              -- column vs literal
+filter .status == "active"    -- column vs string
+filter .price <= .budget      -- column vs column (types must match)
+
 -- Filter nulls and refine Maybe T -> T
 require [nullable_col]
 
@@ -132,6 +137,12 @@ fn normalizeUrl = trim >> toLowercase >> stripPrefix "https://"
 ```
 
 For anything more complex, write it in Python and call it from your pipeline.
+
+## Goals
+
+- **Compile-time safety** - If it compiles, the schema transformations are valid
+- **Elm-like error messages** - Clear, helpful errors that explain what went wrong and suggest fixes
+- **Minimal syntax** - A small language focused on data transformation, not general computation
 
 ## Status
 

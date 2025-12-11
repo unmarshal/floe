@@ -246,6 +246,82 @@ fn t = join nonexistent on .x == .x
        Left e => fail "elab error: table not found" e
 
 -----------------------------------------------------------
+-- Filter Comparison Tests
+-----------------------------------------------------------
+
+testElabFilterIntComparison : TestResult
+testElabFilterIntComparison =
+  let src = """
+schema A { age: Int64, name: String, }
+schema B { age: Int64, name: String, }
+fn t :: A -> B
+fn t = filter .age > 18
+"""
+  in case elabCheck src of
+       Right () => pass "elab filter int comparison"
+       Left e => fail "elab filter int comparison" e
+
+testElabFilterStringComparison : TestResult
+testElabFilterStringComparison =
+  let src = """
+schema A { status: String, name: String, }
+schema B { status: String, name: String, }
+fn t :: A -> B
+fn t = filter .status == "active"
+"""
+  in case elabCheck src of
+       Right () => pass "elab filter string comparison"
+       Left e => fail "elab filter string comparison" e
+
+testElabFilterColumnComparison : TestResult
+testElabFilterColumnComparison =
+  let src = """
+schema A { x: Int64, y: Int64, }
+schema B { x: Int64, y: Int64, }
+fn t :: A -> B
+fn t = filter .x < .y
+"""
+  in case elabCheck src of
+       Right () => pass "elab filter column comparison"
+       Left e => fail "elab filter column comparison" e
+
+testElabFilterStringColumnComparison : TestResult
+testElabFilterStringColumnComparison =
+  let src = """
+schema A { name: String, other_name: String, }
+schema B { name: String, other_name: String, }
+fn t :: A -> B
+fn t = filter .name == .other_name
+"""
+  in case elabCheck src of
+       Right () => pass "elab filter string column comparison"
+       Left e => fail "elab filter string column comparison" e
+
+testElabFilterComparisonTypeMismatch : TestResult
+testElabFilterComparisonTypeMismatch =
+  let src = """
+schema A { age: String, name: String, }
+schema B { age: String, name: String, }
+fn t :: A -> B
+fn t = filter .age > 18
+"""
+  in case elabExpectError src "Int64" of
+       Right () => pass "elab error: filter comparison type mismatch"
+       Left e => fail "elab error: filter comparison type mismatch" e
+
+testElabFilterColumnComparisonTypeMismatch : TestResult
+testElabFilterColumnComparisonTypeMismatch =
+  let src = """
+schema A { x: Int64, y: String, }
+schema B { x: Int64, y: String, }
+fn t :: A -> B
+fn t = filter .x == .y
+"""
+  in case elabExpectError src "same type" of
+       Right () => pass "elab error: filter column comparison type mismatch"
+       Left e => fail "elab error: filter column comparison type mismatch" e
+
+-----------------------------------------------------------
 -- Test Suite
 -----------------------------------------------------------
 
@@ -268,4 +344,10 @@ elaborateTests = suite "Elaborate Tests"
   , testElabRequireNonNullable
   , testElabUndefinedSchema
   , testElabTableNotFound
+  , testElabFilterIntComparison
+  , testElabFilterStringComparison
+  , testElabFilterColumnComparison
+  , testElabFilterComparisonTypeMismatch
+  , testElabFilterColumnComparisonTypeMismatch
+  , testElabFilterStringColumnComparison
   ]

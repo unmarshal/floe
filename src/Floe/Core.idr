@@ -37,6 +37,42 @@ data AllHasMaybeCol : Schema -> List String -> Type where
   AllMaybeCons : {0 t : Ty} -> HasCol s nm (TMaybe t) -> AllHasMaybeCol s nms -> AllHasMaybeCol s (nm :: nms)
 
 -----------------------------------------------------------
+-- Typed Filter Expressions (schema-indexed, result type Bool)
+-----------------------------------------------------------
+
+-- Comparison operators
+public export
+data CmpOp = CmpEq | CmpNeq | CmpLt | CmpGt | CmpLte | CmpGte
+
+public export
+Show CmpOp where
+  show CmpEq = "=="
+  show CmpNeq = "!="
+  show CmpLt = "<"
+  show CmpGt = ">"
+  show CmpLte = "<="
+  show CmpGte = ">="
+
+-- A filter expression that evaluates to Bool, indexed by schema
+public export
+data FilterExpr : Schema -> Type where
+  -- Simple column reference (must be Bool)
+  FCol : (col : String) -> (0 prf : HasCol s col TBool) -> FilterExpr s
+  -- Comparison: .col == value (or other comparison ops)
+  FCompareCol : (col : String) -> (op : CmpOp) -> (val : String)
+              -> (0 prf : HasCol s col t) -> FilterExpr s
+  -- Comparison: .col1 == .col2
+  FCompareCols : (col1 : String) -> (op : CmpOp) -> (col2 : String)
+               -> (0 prf1 : HasCol s col1 t) -> (0 prf2 : HasCol s col2 t) -> FilterExpr s
+  -- Comparison with integer literal
+  FCompareInt : (col : String) -> (op : CmpOp) -> (val : Integer)
+              -> (0 prf : HasCol s col TInt64) -> FilterExpr s
+  -- Logical AND
+  FAnd : FilterExpr s -> FilterExpr s -> FilterExpr s
+  -- Logical OR
+  FOr : FilterExpr s -> FilterExpr s -> FilterExpr s
+
+-----------------------------------------------------------
 -- Schema Transformations (type-level functions)
 -----------------------------------------------------------
 
@@ -220,9 +256,8 @@ data Pipeline : Schema -> Schema -> Type where
           -> Pipeline (RefineCols names sIn) sOut
           -> Pipeline sIn sOut
 
-  -- Filter on boolean column
-  Filter : (col : String)
-         -> (0 prf : HasCol sIn col TBool)
+  -- Filter on boolean expression
+  Filter : (expr : FilterExpr sIn)
          -> Pipeline sIn sOut
          -> Pipeline sIn sOut
 

@@ -252,6 +252,72 @@ elabMapAssigns s (f :: rest) = do
   Just (assign :: assigns)
 
 -----------------------------------------------------------
+-- Elaborate Filter Expression
+-----------------------------------------------------------
+
+-- Convert surface comparison ops to core ops
+surfaceToCmpOp : SExpr -> SExpr -> Maybe (SExpr, CmpOp, SExpr)
+surfaceToCmpOp l r = Nothing  -- Not a comparison at top level
+
+extractCmpOp : SExpr -> Maybe (SExpr, CmpOp, SExpr)
+extractCmpOp (SEq _ l r) = Just (l, CmpEq, r)
+extractCmpOp (SNeq _ l r) = Just (l, CmpNeq, r)
+extractCmpOp (SLt _ l r) = Just (l, CmpLt, r)
+extractCmpOp (SGt _ l r) = Just (l, CmpGt, r)
+extractCmpOp (SLte _ l r) = Just (l, CmpLte, r)
+extractCmpOp (SGte _ l r) = Just (l, CmpGte, r)
+extractCmpOp _ = Nothing
+
+-- Elaborate a filter expression to typed FilterExpr
+elabFilterExpr : Span -> (s : Schema) -> SExpr -> Result (FilterExpr s)
+-- Simple column reference (must be Bool)
+elabFilterExpr span s (SColRef _ col) =
+  case findColWithTy s col TBool of
+    Just prf => ok (FCol col prf)
+    Nothing => case getColTy s col of
+      Nothing => err (ColNotFound span col s)
+      Just t => err (ColNotBool span col t)
+elabFilterExpr span s (SColRefNullCheck _ col) =
+  case findColWithTy s col TBool of
+    Just prf => ok (FCol col prf)
+    Nothing => case getColTy s col of
+      Nothing => err (ColNotFound span col s)
+      Just t => err (ColNotBool span col t)
+-- Logical AND
+elabFilterExpr span s (SAnd _ l r) = do
+  lExpr <- elabFilterExpr span s l
+  rExpr <- elabFilterExpr span s r
+  ok (FAnd lExpr rExpr)
+-- Logical OR
+elabFilterExpr span s (SOr _ l r) = do
+  lExpr <- elabFilterExpr span s l
+  rExpr <- elabFilterExpr span s r
+  ok (FOr lExpr rExpr)
+-- Comparison expressions
+elabFilterExpr span s expr =
+  case extractCmpOp expr of
+    Just (SColRef _ col1, op, SColRef _ col2) =>
+      -- .col1 op .col2
+      case findCol s col1 of
+        Nothing => err (ColNotFound span col1 s)
+        Just (MkColProof t1 prf1) =>
+          case findColWithTy s col2 t1 of
+            Nothing => err (ParseError span ("Column '" ++ col2 ++ "' must have same type as '" ++ col1 ++ "'"))
+            Just prf2 => ok (FCompareCols col1 op col2 prf1 prf2)
+    Just (SColRef _ col, op, SIntLit _ val) =>
+      -- .col op integer
+      case findColWithTy s col TInt64 of
+        Nothing => err (ParseError span ("Column '" ++ col ++ "' must be Int64 for integer comparison"))
+        Just prf => ok (FCompareInt col op val prf)
+    Just (SColRef _ col, op, SStrLit _ val) =>
+      -- .col op "string"
+      case findCol s col of
+        Nothing => err (ColNotFound span col s)
+        Just (MkColProof t prf) => ok (FCompareCol col op val prf)
+    Just _ => err (ParseError span "Unsupported comparison expression")
+    Nothing => err (ParseError span "Invalid filter expression")
+
+-----------------------------------------------------------
 -- Elaborate Single Operation
 -----------------------------------------------------------
 
@@ -287,17 +353,10 @@ elabOp ctx sIn (SRequire span names) =
     Nothing => err (ParseError span "One or more columns not found or not nullable for require")
     Just prf => ok (RefineCols names sIn ** Require names prf Done)
 
--- Filter on boolean expression (for now, only support simple column refs)
-elabOp ctx sIn (SFilter span expr) =
-  case getColName expr of
-    Nothing => err (ParseError span "Filter currently only supports simple column references")
-    Just col =>
-      case findColWithTy sIn col TBool of
-        Nothing =>
-          case getColTy sIn col of
-            Nothing => err (ColNotFound span col sIn)
-            Just t => err (ColNotBool span col t)
-        Just prf => ok (sIn ** Filter col prf Done)
+-- Filter on boolean expression
+elabOp ctx sIn (SFilter span expr) = do
+  filterExpr <- elabFilterExpr span sIn expr
+  ok (sIn ** Filter filterExpr Done)
 
 -- Map: field assignments defining new schema
 elabOp ctx sIn (SMap span fields) =
@@ -354,7 +413,7 @@ chain (Rename old new prf rest) p2 = Rename old new prf (chain rest p2)
 chain (Drop names prf rest) p2 = Drop names prf (chain rest p2)
 chain (Select names prf rest) p2 = Select names prf (chain rest p2)
 chain (Require names prf rest) p2 = Require names prf (chain rest p2)
-chain (Filter col prf rest) p2 = Filter col prf (chain rest p2)
+chain (Filter expr rest) p2 = Filter expr (chain rest p2)
 chain (MapFields assigns rest) p2 = MapFields assigns (chain rest p2)
 chain (Transform cols fn fnInTy prf rest) p2 = Transform cols fn fnInTy prf (chain rest p2)
 chain (UniqueBy col prf rest) p2 = UniqueBy col prf (chain rest p2)

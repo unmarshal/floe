@@ -165,6 +165,34 @@ mapToPolars : List (MapAssign s) -> String -> String
 mapToPolars = mapToPolarsWithContext [] []
 
 -----------------------------------------------------------
+-- Filter Expression Codegen
+-----------------------------------------------------------
+
+-- Generate Polars comparison operator
+cmpOpToPolars : CmpOp -> String
+cmpOpToPolars CmpEq = "=="
+cmpOpToPolars CmpNeq = "!="
+cmpOpToPolars CmpLt = "<"
+cmpOpToPolars CmpGt = ">"
+cmpOpToPolars CmpLte = "<="
+cmpOpToPolars CmpGte = ">="
+
+-- Generate Polars code for a FilterExpr
+filterExprToPolars : FilterExpr s -> String
+filterExprToPolars (FCol col _) =
+  "pl.col(\"" ++ col ++ "\")"
+filterExprToPolars (FCompareCol col op val _) =
+  "pl.col(\"" ++ col ++ "\") " ++ cmpOpToPolars op ++ " \"" ++ val ++ "\""
+filterExprToPolars (FCompareCols col1 op col2 _ _) =
+  "pl.col(\"" ++ col1 ++ "\") " ++ cmpOpToPolars op ++ " pl.col(\"" ++ col2 ++ "\")"
+filterExprToPolars (FCompareInt col op val _) =
+  "pl.col(\"" ++ col ++ "\") " ++ cmpOpToPolars op ++ " " ++ show val
+filterExprToPolars (FAnd l r) =
+  "(" ++ filterExprToPolars l ++ ") & (" ++ filterExprToPolars r ++ ")"
+filterExprToPolars (FOr l r) =
+  "(" ++ filterExprToPolars l ++ ") | (" ++ filterExprToPolars r ++ ")"
+
+-----------------------------------------------------------
 -- Polars Code Generation
 -----------------------------------------------------------
 
@@ -194,8 +222,8 @@ toPolarsWithConstsAndFns consts fnDefs (Select names _ rest) df =
 toPolarsWithConstsAndFns consts fnDefs (Require names _ rest) df =
   let checks = joinWith " & " (map notNull names)
   in toPolarsWithConstsAndFns consts fnDefs rest (df ++ ".filter(" ++ checks ++ ")")
-toPolarsWithConstsAndFns consts fnDefs (Filter col _ rest) df =
-  toPolarsWithConstsAndFns consts fnDefs rest (df ++ ".filter(pl.col(\"" ++ col ++ "\"))")
+toPolarsWithConstsAndFns consts fnDefs (Filter expr rest) df =
+  toPolarsWithConstsAndFns consts fnDefs rest (df ++ ".filter(" ++ filterExprToPolars expr ++ ")")
 toPolarsWithConstsAndFns consts fnDefs (MapFields assigns rest) df =
   toPolarsWithConstsAndFns consts fnDefs rest (mapToPolarsWithContext consts fnDefs assigns df)
 toPolarsWithConstsAndFns consts fnDefs (Transform cols fn _ _ rest) df =

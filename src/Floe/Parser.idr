@@ -31,6 +31,11 @@ data Token
   | TPipe          -- >>
   | TPipeForward   -- |>
   | TDoubleEq      -- ==
+  | TNotEq         -- !=
+  | TLt            -- <
+  | TGt            -- >
+  | TLte           -- <=
+  | TGte           -- >=
   | TEquals        -- =
   | TLBrace
   | TRBrace
@@ -67,6 +72,11 @@ Show Token where
   show TPipe = ">>"
   show TPipeForward = "|>"
   show TDoubleEq = "=="
+  show TNotEq = "!="
+  show TLt = "<"
+  show TGt = ">"
+  show TLte = "<="
+  show TGte = ">="
   show TEquals = "="
   show TLBrace = "{"
   show TRBrace = "}"
@@ -103,6 +113,11 @@ Eq Token where
   TDoubleColon == TDoubleColon = True
   TPipe == TPipe = True
   TDoubleEq == TDoubleEq = True
+  TNotEq == TNotEq = True
+  TLt == TLt = True
+  TGt == TGt = True
+  TLte == TLte = True
+  TGte == TGte = True
   TEquals == TEquals = True
   TLBrace == TLBrace = True
   TRBrace == TRBrace = True
@@ -252,8 +267,13 @@ lexOne st =
     ('-' :: '>' :: _) => Right (MkTok sp TArrow, advanceN 2 st)
     ('=' :: '>' :: _) => Right (MkTok sp TFatArrow, advanceN 2 st)
     ('=' :: '=' :: _) => Right (MkTok sp TDoubleEq, advanceN 2 st)
-    ('=' :: _) => Right (MkTok sp TEquals, advance st)
+    ('!' :: '=' :: _) => Right (MkTok sp TNotEq, advanceN 2 st)
+    ('<' :: '=' :: _) => Right (MkTok sp TLte, advanceN 2 st)
+    ('>' :: '=' :: _) => Right (MkTok sp TGte, advanceN 2 st)
+    ('<' :: _) => Right (MkTok sp TLt, advance st)
     ('>' :: '>' :: _) => Right (MkTok sp TPipe, advanceN 2 st)
+    ('>' :: _) => Right (MkTok sp TGt, advance st)
+    ('=' :: _) => Right (MkTok sp TEquals, advance st)
     ('&' :: '&' :: _) => Right (MkTok sp TAnd, advanceN 2 st)
     ('|' :: '|' :: _) => Right (MkTok sp TOr, advanceN 2 st)
     ('|' :: '>' :: _) => Right (MkTok sp TPipeForward, advanceN 2 st)
@@ -554,6 +574,30 @@ mutual
   parseBuiltinNoArg "lenChars" _ = Right BLenChars
   parseBuiltinNoArg name sp = Left (ParseError sp ("Builtin '" ++ name ++ "' requires arguments, use in fn definition instead"))
 
+  -- Parse comparison operator if present
+  pComparisonOp : ParseState -> Maybe (Span -> SExpr -> SExpr -> SExpr, ParseState)
+  pComparisonOp st =
+    let tok = currentTok st
+    in case tok.tok of
+         TDoubleEq => Just (\sp, l, r => SEq sp l r, advanceP st)
+         TNotEq => Just (\sp, l, r => SNeq sp l r, advanceP st)
+         TLt => Just (\sp, l, r => SLt sp l r, advanceP st)
+         TGt => Just (\sp, l, r => SGt sp l r, advanceP st)
+         TLte => Just (\sp, l, r => SLte sp l r, advanceP st)
+         TGte => Just (\sp, l, r => SGte sp l r, advanceP st)
+         _ => Nothing
+
+  -- Parse comparison expression (primary op primary)
+  pComparisonExpr : Parser SExpr
+  pComparisonExpr st = do
+    (left, st) <- pPrimaryExpr st
+    case pComparisonOp st of
+      Just (mkOp, st') => do
+        let sp = (currentTok st).span
+        (right, st'') <- pPrimaryExpr st'
+        Right (mkOp sp left right, st'')
+      Nothing => Right (left, st)
+
   -- Expression continuation for && and ||
   pExprCont : SExpr -> Parser SExpr
   pExprCont left st =
@@ -561,20 +605,20 @@ mutual
       then do
         (sp, st) <- pSpan st
         let st = advanceP st
-        (right, st) <- pPrimaryExpr st
+        (right, st) <- pComparisonExpr st
         pExprCont (SAnd sp left right) st
       else if isToken TOr st
         then do
           (sp, st) <- pSpan st
           let st = advanceP st
-          (right, st) <- pPrimaryExpr st
+          (right, st) <- pComparisonExpr st
           pExprCont (SOr sp left right) st
         else Right (left, st)
 
-  -- Expression with && and ||
+  -- Expression with comparisons, && and ||
   pExpr : Parser SExpr
   pExpr st = do
-    (left, st) <- pPrimaryExpr st
+    (left, st) <- pComparisonExpr st
     pExprCont left st
 
 -----------------------------------------------------------

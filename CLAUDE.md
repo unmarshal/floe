@@ -46,12 +46,10 @@ floe/
 │   ├── Basic.floe         # Basic operations (rename, drop, filter)
 │   └── JoinExample.floe   # Join operations example
 └── tests/
-    ├── run.sh             # Integration test runner
-    └── join_enriches_orders/  # Example integration test
-        ├── Pipeline.floe      # The floe program
-        ├── users.parquet      # Input data
-        ├── orders.parquet     # Input data
-        └── expected.parquet   # Expected output
+    ├── run.sh                  # Integration test runner
+    ├── join_enriches_orders/   # Join integration test
+    ├── filter_comparisons/     # Filter with int comparison test
+    └── filter_string_columns/  # Filter comparing string columns test
 ```
 
 ## Architecture
@@ -102,7 +100,9 @@ fn main input output =
 - `drop [col1, col2]` - remove columns  
 - `select [col1, col2]` - keep only these columns
 - `require [col1, col2]` - filter nulls, refine `Maybe T -> T`
-- `filter col` - filter on boolean column
+- `filter .col` - filter on boolean column
+- `filter .col > 18` - filter with comparison (supports `==`, `!=`, `<`, `>`, `<=`, `>=`)
+- `filter .col1 == .col2` - filter comparing two columns (types must match)
 - `map { field: expr, ... }` - project/transform columns
 - `transform [cols] fn` - apply function to columns
 - `uniqueBy .col` - deduplicate by column
@@ -164,6 +164,30 @@ data AllHasMaybeCol : Schema -> List String -> Type where
 ```
 
 Used by `Require` to prove all columns being required are actually `Maybe T` (so they can be refined to `T`).
+
+### `FilterExpr` - Schema-indexed filter expressions
+
+```idris
+data CmpOp = CmpEq | CmpNeq | CmpLt | CmpGt | CmpLte | CmpGte
+
+data FilterExpr : Schema -> Type where
+  -- Simple boolean column reference
+  FCol : (col : String) -> (0 prf : HasCol s col TBool) -> FilterExpr s
+  -- Column vs string literal: .status == "active"
+  FCompareCol : (col : String) -> (op : CmpOp) -> (val : String)
+              -> (0 prf : HasCol s col t) -> FilterExpr s
+  -- Column vs column: .price <= .budget (types must match)
+  FCompareCols : (col1 : String) -> (op : CmpOp) -> (col2 : String)
+               -> (0 prf1 : HasCol s col1 t) -> (0 prf2 : HasCol s col2 t) -> FilterExpr s
+  -- Column vs integer: .age > 18
+  FCompareInt : (col : String) -> (op : CmpOp) -> (val : Integer)
+              -> (0 prf : HasCol s col TInt64) -> FilterExpr s
+  -- Logical combinators
+  FAnd : FilterExpr s -> FilterExpr s -> FilterExpr s
+  FOr : FilterExpr s -> FilterExpr s -> FilterExpr s
+```
+
+Used by `Filter`. Key insight: `FCompareCols` shares type variable `t` between both proofs, so Idris enforces that both columns have the same type at compile time.
 
 ### Elaboration
 

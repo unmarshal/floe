@@ -1,0 +1,20 @@
+schema Employee {
+    name: String,
+    department: String,
+    assigned_team: String,
+}
+
+schema MatchedEmployee {
+    name: String,
+    department: String,
+    assigned_team: String,
+}
+
+fn filterMatched :: Employee -> MatchedEmployee
+fn filterMatched =
+    filter .department == .assigned_team
+
+fn main =
+    read "employees.parquet" as Employee
+    |> filterMatched
+    sink "output.parquet"

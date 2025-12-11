@@ -120,6 +120,12 @@ data SExpr
   | SIntLit Span Integer             -- 123
   | SAnd Span SExpr SExpr            -- expr && expr
   | SOr Span SExpr SExpr             -- expr || expr
+  | SEq Span SExpr SExpr             -- expr == expr
+  | SNeq Span SExpr SExpr            -- expr != expr
+  | SLt Span SExpr SExpr             -- expr < expr
+  | SGt Span SExpr SExpr             -- expr > expr
+  | SLte Span SExpr SExpr            -- expr <= expr
+  | SGte Span SExpr SExpr            -- expr >= expr
 
 public export covering
 Show SExpr where
@@ -129,6 +135,12 @@ Show SExpr where
   show (SListLen _ e) = "listLen " ++ show e
   show (SFnApp _ fn arg) = fn ++ " " ++ show arg
   show (SBuiltinApp _ b arg) = show b ++ " " ++ show arg
+  show (SEq _ l r) = show l ++ " == " ++ show r
+  show (SNeq _ l r) = show l ++ " != " ++ show r
+  show (SLt _ l r) = show l ++ " < " ++ show r
+  show (SGt _ l r) = show l ++ " > " ++ show r
+  show (SLte _ l r) = show l ++ " <= " ++ show r
+  show (SGte _ l r) = show l ++ " >= " ++ show r
   show (SVar _ nm) = nm
   show (SStrLit _ s) = show s
   show (SIntLit _ i) = show i
@@ -148,6 +160,12 @@ exprSpan (SStrLit s _) = s
 exprSpan (SIntLit s _) = s
 exprSpan (SAnd s _ _) = s
 exprSpan (SOr s _ _) = s
+exprSpan (SEq s _ _) = s
+exprSpan (SNeq s _ _) = s
+exprSpan (SLt s _ _) = s
+exprSpan (SGt s _ _) = s
+exprSpan (SLte s _ _) = s
+exprSpan (SGte s _ _) = s
 
 -----------------------------------------------------------
 -- Map field specifications

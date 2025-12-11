@@ -1,0 +1,23 @@
+schema Product {
+    name: String,
+    price: Int64,
+    category: String,
+    in_stock: Bool,
+}
+
+schema AffordableProduct {
+    name: String,
+    price: Int64,
+    category: String,
+    in_stock: Bool,
+}
+
+fn filterAffordable :: Product -> AffordableProduct
+fn filterAffordable =
+    filter .price < 100
+    >> filter .in_stock
+
+fn main =
+    read "products.parquet" as Product
+    |> filterAffordable
+    sink "output.parquet"

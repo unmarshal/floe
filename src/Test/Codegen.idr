@@ -346,6 +346,70 @@ fn t = transform [name] normalize
        Left e => fail "codegen builtin chain" e
 
 -----------------------------------------------------------
+-- Filter Comparison Tests
+-----------------------------------------------------------
+
+testCodegenFilterIntComparison : TestResult
+testCodegenFilterIntComparison =
+  let src = """
+schema A { age: Int64, name: String, }
+schema B { age: Int64, name: String, }
+fn t :: A -> B
+fn t = filter .age > 18
+"""
+  in case generateCode src of
+       Right code =>
+         if codeContains ".filter" code && codeContains "pl.col(\"age\")" code && codeContains "> 18" code
+           then pass "codegen filter int comparison"
+           else fail "codegen filter int comparison" ("Missing filter comparison: " ++ code)
+       Left e => fail "codegen filter int comparison" e
+
+testCodegenFilterStringComparison : TestResult
+testCodegenFilterStringComparison =
+  let src = """
+schema A { status: String, name: String, }
+schema B { status: String, name: String, }
+fn t :: A -> B
+fn t = filter .status == "active"
+"""
+  in case generateCode src of
+       Right code =>
+         if codeContains ".filter" code && codeContains "pl.col(\"status\")" code && codeContains "== \"active\"" code
+           then pass "codegen filter string comparison"
+           else fail "codegen filter string comparison" ("Missing filter comparison: " ++ code)
+       Left e => fail "codegen filter string comparison" e
+
+testCodegenFilterColumnComparison : TestResult
+testCodegenFilterColumnComparison =
+  let src = """
+schema A { x: Int64, y: Int64, }
+schema B { x: Int64, y: Int64, }
+fn t :: A -> B
+fn t = filter .x < .y
+"""
+  in case generateCode src of
+       Right code =>
+         if codeContains ".filter" code && codeContains "pl.col(\"x\")" code && codeContains "< pl.col(\"y\")" code
+           then pass "codegen filter column comparison"
+           else fail "codegen filter column comparison" ("Missing filter comparison: " ++ code)
+       Left e => fail "codegen filter column comparison" e
+
+testCodegenFilterStringColumnComparison : TestResult
+testCodegenFilterStringColumnComparison =
+  let src = """
+schema A { name: String, other_name: String, }
+schema B { name: String, other_name: String, }
+fn t :: A -> B
+fn t = filter .name == .other_name
+"""
+  in case generateCode src of
+       Right code =>
+         if codeContains ".filter" code && codeContains "pl.col(\"name\")" code && codeContains "== pl.col(\"other_name\")" code
+           then pass "codegen filter string column comparison"
+           else fail "codegen filter string column comparison" ("Missing filter comparison: " ++ code)
+       Left e => fail "codegen filter string column comparison" e
+
+-----------------------------------------------------------
 -- Test Suite
 -----------------------------------------------------------
 
@@ -368,4 +432,8 @@ codegenTests = suite "Codegen Tests"
   , testCodegenTrim
   , testCodegenLenChars
   , testCodegenBuiltinChain
+  , testCodegenFilterIntComparison
+  , testCodegenFilterStringComparison
+  , testCodegenFilterColumnComparison
+  , testCodegenFilterStringColumnComparison
   ]
