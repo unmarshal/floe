@@ -274,11 +274,11 @@ mapExprToPolars (MIfNullable cond thenE elseE) =
   -- when(cond).then(thenE).when(~cond).then(elseE) -> null when cond is null
   "pl.when(" ++ filterExprToPolars cond ++ ").then(" ++ mapExprToPolars thenE ++ ").when(~(" ++ filterExprToPolars cond ++ ")).then(" ++ mapExprToPolars elseE ++ ")"
 -- Arithmetic operations
-mapExprToPolars (MAdd l r) = "(" ++ mapExprToPolars l ++ " + " ++ mapExprToPolars r ++ ")"
-mapExprToPolars (MSub l r) = "(" ++ mapExprToPolars l ++ " - " ++ mapExprToPolars r ++ ")"
-mapExprToPolars (MMul l r) = "(" ++ mapExprToPolars l ++ " * " ++ mapExprToPolars r ++ ")"
-mapExprToPolars (MDiv l r) = "(" ++ mapExprToPolars l ++ " / " ++ mapExprToPolars r ++ ")"
-mapExprToPolars (MMod l r) = "(" ++ mapExprToPolars l ++ " % " ++ mapExprToPolars r ++ ")"
+mapExprToPolars (MAdd _ l r) = "(" ++ mapExprToPolars l ++ " + " ++ mapExprToPolars r ++ ")"
+mapExprToPolars (MSub _ l r) = "(" ++ mapExprToPolars l ++ " - " ++ mapExprToPolars r ++ ")"
+mapExprToPolars (MMul _ l r) = "(" ++ mapExprToPolars l ++ " * " ++ mapExprToPolars r ++ ")"
+mapExprToPolars (MDiv _ l r) = "(" ++ mapExprToPolars l ++ " / " ++ mapExprToPolars r ++ ")"
+mapExprToPolars (MMod _ l r) = "(" ++ mapExprToPolars l ++ " % " ++ mapExprToPolars r ++ ")"
 mapExprToPolars (MConcat l r) = "pl.concat_str([" ++ mapExprToPolars l ++ ", " ++ mapExprToPolars r ++ "])"
 mapExprToPolars (MCast targetTy expr) = "(" ++ mapExprToPolars expr ++ ").cast(pl." ++ tyToPolars targetTy ++ ")"
 

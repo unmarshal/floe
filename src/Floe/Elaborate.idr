@@ -642,43 +642,14 @@ filterExprIsNullable s expr = anyNullable s (filterExprCols expr)
 -----------------------------------------------------------
 
 -- Helper for arithmetic elaboration
-isNumericTy : Ty -> Bool
-isNumericTy TInt8 = True
-isNumericTy TInt16 = True
-isNumericTy TInt32 = True
-isNumericTy TInt64 = True
-isNumericTy TUInt8 = True
-isNumericTy TUInt16 = True
-isNumericTy TUInt32 = True
-isNumericTy TUInt64 = True
-isNumericTy TFloat32 = True
-isNumericTy TFloat64 = True
-isNumericTy (TDecimal _ _) = True
-isNumericTy _ = False
-
 -- Apply arithmetic operator to two expressions of the same type
-applyArithOp : ArithOp -> MapExpr s t -> MapExpr s t -> MapExpr s t
-applyArithOp AOAdd l r = MAdd l r
-applyArithOp AOSub l r = MSub l r
-applyArithOp AOMul l r = MMul l r
-applyArithOp AODiv l r = MDiv l r
-applyArithOp AOMod l r = MMod l r
-
--- Check if two types are compatible for arithmetic
--- Same exact type required (no implicit widening)
-areArithCompatible : Ty -> Ty -> Bool
-areArithCompatible TInt8 TInt8 = True
-areArithCompatible TInt16 TInt16 = True
-areArithCompatible TInt32 TInt32 = True
-areArithCompatible TInt64 TInt64 = True
-areArithCompatible TUInt8 TUInt8 = True
-areArithCompatible TUInt16 TUInt16 = True
-areArithCompatible TUInt32 TUInt32 = True
-areArithCompatible TUInt64 TUInt64 = True
-areArithCompatible TFloat32 TFloat32 = True
-areArithCompatible TFloat64 TFloat64 = True
-areArithCompatible (TDecimal _ _) (TDecimal _ _) = True
-areArithCompatible _ _ = False
+-- Requires proof that the type is numeric
+applyArithOp : {0 t : Ty} -> IsNumeric t -> ArithOp -> MapExpr s t -> MapExpr s t -> MapExpr s t
+applyArithOp prf AOAdd l r = MAdd prf l r
+applyArithOp prf AOSub l r = MSub prf l r
+applyArithOp prf AOMul l r = MMul prf l r
+applyArithOp prf AODiv l r = MDiv prf l r
+applyArithOp prf AOMod l r = MMod prf l r
 
 -- Get result type for Decimal arithmetic (max precision, max scale)
 decimalResultTy : Nat -> Nat -> Nat -> Nat -> Ty
@@ -706,17 +677,17 @@ elabArithOp ctx span s op left right = do
     -- Left is literal, right is not - coerce left to right's type
     (Just leftVal, Nothing) => do
       MkMapExprResult rightTy rightExpr <- elabMapExpr ctx span s right
-      if isNumericTy rightTy
-        then let leftExpr = coerceLiteral s leftVal rightTy
-             in ok (MkMapExprResult rightTy (applyArithOp op leftExpr rightExpr))
-        else err (ParseError span ("Arithmetic requires numeric types, got: " ++ show rightTy))
+      case isNumeric rightTy of
+        Just prf => let leftExpr = coerceLiteral s leftVal rightTy
+                    in ok (MkMapExprResult rightTy (applyArithOp prf op leftExpr rightExpr))
+        Nothing => err (ParseError span ("Arithmetic requires numeric types, got: " ++ show rightTy))
     -- Right is literal, left is not - coerce right to left's type
     (Nothing, Just rightVal) => do
       MkMapExprResult leftTy leftExpr <- elabMapExpr ctx span s left
-      if isNumericTy leftTy
-        then let rightExpr = coerceLiteral s rightVal leftTy
-             in ok (MkMapExprResult leftTy (applyArithOp op leftExpr rightExpr))
-        else err (ParseError span ("Arithmetic requires numeric types, got: " ++ show leftTy))
+      case isNumeric leftTy of
+        Just prf => let rightExpr = coerceLiteral s rightVal leftTy
+                    in ok (MkMapExprResult leftTy (applyArithOp prf op leftExpr rightExpr))
+        Nothing => err (ParseError span ("Arithmetic requires numeric types, got: " ++ show leftTy))
     -- Both literals or neither - use standard elaboration
     _ => do
       MkMapExprResult leftTy leftExpr <- elabMapExpr ctx span s left
@@ -727,9 +698,9 @@ elabArithOp ctx span s op left right = do
     buildArith span op t1 e1 t2 e2 =
       case decEq t1 t2 of
         Yes Refl =>
-          if isNumericTy t1
-            then ok (MkMapExprResult t1 (applyArithOp op e1 e2))
-            else err (ParseError span ("Arithmetic requires numeric types, got: " ++ show t1))
+          case isNumeric t1 of
+            Just prf => ok (MkMapExprResult t1 (applyArithOp prf op e1 e2))
+            Nothing => err (ParseError span ("Arithmetic requires numeric types, got: " ++ show t1))
         No _ =>
           -- Check for Decimal with different precision/scale
           case (t1, t2) of
@@ -741,7 +712,9 @@ elabArithOp ctx span s op left right = do
                   -- Coerce both expressions to result type for the IR
                   e1' : MapExpr s resultTy = believe_me e1
                   e2' : MapExpr s resultTy = believe_me e2
-              in ok (MkMapExprResult resultTy (applyArithOp op e1' e2'))
+              in case isNumeric resultTy of
+                   Just prf => ok (MkMapExprResult resultTy (applyArithOp prf op e1' e2'))
+                   Nothing => err (ParseError span "Internal error: Decimal should be numeric")
             _ => err (ParseError span ("Arithmetic operands have different types: " ++ show t1 ++ " vs " ++ show t2))
 
 -- Column reference

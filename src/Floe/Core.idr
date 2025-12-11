@@ -37,6 +37,41 @@ data AllHasMaybeCol : Schema -> List String -> Type where
   AllMaybeCons : {0 t : Ty} -> HasCol s nm (TMaybe t) -> AllHasMaybeCol s nms -> AllHasMaybeCol s (nm :: nms)
 
 -----------------------------------------------------------
+-- Numeric Type Predicate
+-----------------------------------------------------------
+
+-- Proof that a type is numeric (supports arithmetic operations)
+public export
+data IsNumeric : Ty -> Type where
+  NumInt8    : IsNumeric TInt8
+  NumInt16   : IsNumeric TInt16
+  NumInt32   : IsNumeric TInt32
+  NumInt64   : IsNumeric TInt64
+  NumUInt8   : IsNumeric TUInt8
+  NumUInt16  : IsNumeric TUInt16
+  NumUInt32  : IsNumeric TUInt32
+  NumUInt64  : IsNumeric TUInt64
+  NumFloat32 : IsNumeric TFloat32
+  NumFloat64 : IsNumeric TFloat64
+  NumDecimal : IsNumeric (TDecimal p s)
+
+-- Decide if a type is numeric (returns proof or Nothing)
+public export
+isNumeric : (t : Ty) -> Maybe (IsNumeric t)
+isNumeric TInt8 = Just NumInt8
+isNumeric TInt16 = Just NumInt16
+isNumeric TInt32 = Just NumInt32
+isNumeric TInt64 = Just NumInt64
+isNumeric TUInt8 = Just NumUInt8
+isNumeric TUInt16 = Just NumUInt16
+isNumeric TUInt32 = Just NumUInt32
+isNumeric TUInt64 = Just NumUInt64
+isNumeric TFloat32 = Just NumFloat32
+isNumeric TFloat64 = Just NumFloat64
+isNumeric (TDecimal p s) = Just NumDecimal
+isNumeric _ = Nothing
+
+-----------------------------------------------------------
 -- Typed Filter Expressions (schema-indexed, result type Bool)
 -----------------------------------------------------------
 
@@ -136,11 +171,12 @@ data MapExpr : Schema -> Ty -> Type where
   -- When condition references Maybe columns, result becomes nullable
   MIfNullable : (cond : FilterExpr s) -> (thenE : MapExpr s t) -> (elseE : MapExpr s t) -> MapExpr s (TMaybe t)
   -- Arithmetic operations (both operands must be same numeric type)
-  MAdd : MapExpr s t -> MapExpr s t -> MapExpr s t
-  MSub : MapExpr s t -> MapExpr s t -> MapExpr s t
-  MMul : MapExpr s t -> MapExpr s t -> MapExpr s t
-  MDiv : MapExpr s t -> MapExpr s t -> MapExpr s t
-  MMod : MapExpr s t -> MapExpr s t -> MapExpr s t
+  -- Now requires proof that the type is numeric
+  MAdd : {0 t : Ty} -> (0 prf : IsNumeric t) -> MapExpr s t -> MapExpr s t -> MapExpr s t
+  MSub : {0 t : Ty} -> (0 prf : IsNumeric t) -> MapExpr s t -> MapExpr s t -> MapExpr s t
+  MMul : {0 t : Ty} -> (0 prf : IsNumeric t) -> MapExpr s t -> MapExpr s t -> MapExpr s t
+  MDiv : {0 t : Ty} -> (0 prf : IsNumeric t) -> MapExpr s t -> MapExpr s t -> MapExpr s t
+  MMod : {0 t : Ty} -> (0 prf : IsNumeric t) -> MapExpr s t -> MapExpr s t -> MapExpr s t
   -- String concatenation
   MConcat : MapExpr s TString -> MapExpr s TString -> MapExpr s TString
   -- Cast expression: converts expr from type t1 to type t2
