@@ -41,7 +41,7 @@ The compiler proves:
 idris2 --build floe.ipkg
 
 # Compile a .floe file to Python/Polars
-./build/exec/floe examples/authorship.floe > pipeline.py
+./build/exec/floe examples/Authorship.floe > pipeline.py
 
 # Run tests
 idris2 --build floe-test.ipkg

@@ -9,7 +9,7 @@ A dependently-typed compiler for a data pipeline DSL that generates Python/Polar
 idris2 --build floe.ipkg
 
 # Compile a .floe file to Python
-./build/exec/floe examples/authorship.floe > out.py
+./build/exec/floe examples/Authorship.floe > out.py
 
 # Run tests
 idris2 --build floe-test.ipkg
@@ -41,9 +41,9 @@ floe/
 │       ├── Assert.idr     # Test assertions
 │       └── Runner.idr     # Test framework
 ├── examples/
-│   ├── authorship.floe    # Full example with schemas, transforms, main
-│   ├── example.floe       # Basic example
-│   └── example_join.floe  # Join operations example
+│   ├── Authorship.floe    # Full example with schemas, transforms, main
+│   ├── Basic.floe         # Basic example
+│   └── JoinExample.floe   # Join operations example
 └── Makefile
 ```
 
@@ -62,7 +62,10 @@ The Typed IR uses dependent types to encode schema correctness. When elaboration
 ```floe
 -- Constants and external functions
 let openalex = "https://openalex.org/"
-fn strip_prefix :: String -> String
+
+-- Scalar function (String -> String)
+fn stripOaPrefix :: String -> String
+fn stripOaPrefix = stripPrefix openalex
 
 -- Schema definitions
 schema WorksAuthorship {
@@ -82,7 +85,7 @@ fn transform :: WorksAuthorship -> Authorship
 fn transform =
     rename work_id publication_id >>
     rename institution_id affiliated_organization_id >>
-    map { ..., publication_id: strip_prefix .publication_id }
+    transform [publication_id] stripOaPrefix
 
 -- Entry point
 fn main input output =
@@ -98,10 +101,19 @@ fn main input output =
 - `select [col1, col2]` - keep only these columns
 - `require [col1, col2]` - filter nulls, refine `Maybe T -> T`
 - `filter col` - filter on boolean column
-- `map { field: expr, ... }` - project/transform columns (`...` spreads remaining)
+- `map { field: expr, ... }` - project/transform columns
 - `transform [cols] fn` - apply function to columns
-- `unique_by .col` - deduplicate by column
-- `join other on .left_col == .right_col` - join tables
+- `uniqueBy .col` - deduplicate by column
+- `join other on .leftCol == .rightCol` - join tables
+
+### Builtins (camelCase in DSL, snake_case in generated Python)
+
+- `stripPrefix`, `stripSuffix` - string prefix/suffix removal
+- `toLowercase`, `toUppercase` - case conversion
+- `trim` - whitespace removal
+- `lenChars` - string length
+- `replace` - string replacement
+- `cast` - type casting
 
 ### Types
 
