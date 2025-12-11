@@ -98,6 +98,8 @@ fn calculateTotal =
 
 Decimals with different precision/scale can be mixed in arithmetic - Polars handles the conversion automatically.
 
+**Note:** Floe is stricter than Polars here. Polars allows mixing Decimal and Float (silently converting to Float64, losing fixed-point guarantees). Floe rejects this at compile time to prevent accidental precision loss in financial calculations. If you need to mix types, explicitly cast first.
+
 ## Runtime Schema Validation
 
 Floe generates runtime validation to ensure input data matches declared schemas:
