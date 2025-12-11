@@ -103,15 +103,21 @@ record SSchema where
 -- Builtin Calls (must be before SExpr which uses them)
 -----------------------------------------------------------
 
--- An argument to a builtin: either a literal or a constant reference
+-- An argument to a builtin: literal value or constant reference
 public export
 data BuiltinArg
-  = BArgLit String    -- "literal string"
-  | BArgRef String    -- constant_name
+  = BArgStr String     -- "literal string"
+  | BArgInt Integer    -- 42
+  | BArgFloat Double   -- 3.14
+  | BArgBool Bool      -- True / False
+  | BArgRef String     -- constant_name
 
 public export
 Show BuiltinArg where
-  show (BArgLit s) = show s
+  show (BArgStr s) = show s
+  show (BArgInt i) = show i
+  show (BArgFloat f) = show f
+  show (BArgBool b) = if b then "True" else "False"
   show (BArgRef s) = s
 
 -- A configured Polars builtin (with its arguments applied)
@@ -124,6 +130,7 @@ data BuiltinCall
   | BToUppercase            -- .str.to_uppercase()
   | BTrim                   -- .str.strip_chars()
   | BLenChars               -- .str.len_chars()
+  | BFillNull BuiltinArg    -- .fill_null(value)
   | BCast STy               -- .cast(pl.Type)
   -- Add more as needed
 
@@ -136,6 +143,7 @@ Show BuiltinCall where
   show BToUppercase = "toUppercase"
   show BTrim = "trim"
   show BLenChars = "lenChars"
+  show (BFillNull v) = "fillNull " ++ show v
   show (BCast ty) = "cast " ++ show ty
 
 -----------------------------------------------------------
@@ -200,6 +208,7 @@ Show SExpr where
   show (SSub _ l r) = "(" ++ show l ++ " - " ++ show r ++ ")"
   show (SMul _ l r) = "(" ++ show l ++ " * " ++ show r ++ ")"
   show (SDiv _ l r) = "(" ++ show l ++ " / " ++ show r ++ ")"
+  show (SMod _ l r) = "(" ++ show l ++ " % " ++ show r ++ ")"
   show (SConcat _ l r) = "(" ++ show l ++ " ++ " ++ show r ++ ")"
   show (SCast _ e t) = show e ++ " as " ++ show t
 
@@ -229,6 +238,7 @@ exprSpan (SAdd s _ _) = s
 exprSpan (SSub s _ _) = s
 exprSpan (SMul s _ _) = s
 exprSpan (SDiv s _ _) = s
+exprSpan (SMod s _ _) = s
 exprSpan (SConcat s _ _) = s
 exprSpan (SCast s _ _) = s
 

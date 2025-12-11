@@ -309,4 +309,4 @@ For anything more complex, write it in Python and call it from your pipeline.
 
 ## Status
 
-Prototype. Syntax is in flux, but inspired by Elm. Currently generates Python/Polars code. See [CLAUDE.md](CLAUDE.md) for architecture details.
+Prototype. Syntax inspired by Haskell and Idris. Currently generates Python/Polars code. See [CLAUDE.md](CLAUDE.md) for architecture details.

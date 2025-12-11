@@ -1,0 +1,21 @@
+-- Test fillNull with Maybe Int64 -> Int64
+
+schema Input {
+    id: Int64,
+    score: Maybe Int64,
+}
+
+schema Output {
+    id: Int64,
+    score: Int64,
+}
+
+let fillScore : Maybe Int64 -> Int64 = fillNull 0
+
+let transform : Input -> Output =
+    transform [score] fillScore
+
+main = do
+    data <- read "input.parquet" as Input
+    result <- data |> transform
+    sink "output.parquet" result

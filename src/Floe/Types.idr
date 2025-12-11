@@ -351,3 +351,16 @@ Show Span where
 public export
 dummySpan : Span
 dummySpan = MkSpan 0 0 0 0
+
+-----------------------------------------------------------
+-- Schema manipulation helpers
+-----------------------------------------------------------
+
+-- Update the types of specified columns in a schema
+public export
+updateColTypes : Schema -> List String -> Ty -> Schema
+updateColTypes [] _ _ = []
+updateColTypes (MkCol name ty :: rest) cols newTy =
+  if name `elem` cols
+    then MkCol name newTy :: updateColTypes rest cols newTy
+    else MkCol name ty :: updateColTypes rest cols newTy

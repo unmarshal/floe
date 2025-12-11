@@ -186,6 +186,7 @@ processMapFields (SFieldAssign _ newName expr :: rest) =
        SSub _ _ _ => PFExpr newName expr :: assigns   -- Arithmetic: subtraction
        SMul _ _ _ => PFExpr newName expr :: assigns   -- Arithmetic: multiplication
        SDiv _ _ _ => PFExpr newName expr :: assigns   -- Arithmetic: division
+       SMod _ _ _ => PFExpr newName expr :: assigns   -- Arithmetic: modulo
        SConcat _ _ _ => PFExpr newName expr :: assigns -- String concatenation
        SCast _ _ _ => PFExpr newName expr :: assigns  -- Cast expression
        _ => assigns  -- Skip unsupported expressions for now
@@ -243,6 +244,8 @@ validateMapSources span s (PFSpread :: rest) =
 -- Determine output type of a builtin application
 builtinOutputTy : BuiltinCall -> Ty -> Ty
 builtinOutputTy BLenChars _ = TInt64  -- len_chars always returns int
+builtinOutputTy (BFillNull _) (TMaybe t) = t  -- fill_null unwraps Maybe T to T
+builtinOutputTy (BFillNull _) t = t  -- if already non-nullable, preserve type
 builtinOutputTy (BCast SInt8) _ = TInt8
 builtinOutputTy (BCast SInt16) _ = TInt16
 builtinOutputTy (BCast SInt32) _ = TInt32
@@ -257,6 +260,46 @@ builtinOutputTy (BCast SString) _ = TString
 builtinOutputTy (BCast SBool) _ = TBool
 builtinOutputTy (BCast (SDecimal p s)) _ = TDecimal p s
 builtinOutputTy _ t = t  -- Most string builtins preserve type (String -> String)
+
+-- Validate that a fillNull argument matches the expected type
+validateFillNullArg : BuiltinArg -> Ty -> Either String ()
+validateFillNullArg (BArgStr _) TString = Right ()
+validateFillNullArg (BArgInt _) TInt8 = Right ()
+validateFillNullArg (BArgInt _) TInt16 = Right ()
+validateFillNullArg (BArgInt _) TInt32 = Right ()
+validateFillNullArg (BArgInt _) TInt64 = Right ()
+validateFillNullArg (BArgInt _) TUInt8 = Right ()
+validateFillNullArg (BArgInt _) TUInt16 = Right ()
+validateFillNullArg (BArgInt _) TUInt32 = Right ()
+validateFillNullArg (BArgInt _) TUInt64 = Right ()
+validateFillNullArg (BArgFloat _) TFloat32 = Right ()
+validateFillNullArg (BArgFloat _) TFloat64 = Right ()
+validateFillNullArg (BArgBool _) TBool = Right ()
+validateFillNullArg arg expectedTy = Left ("fillNull argument type mismatch: expected " ++ show expectedTy ++ ", got " ++ show arg)
+
+-- Validate a builtin chain against input/output types
+validateBuiltinChain : List BuiltinCall -> Ty -> Ty -> Either String ()
+validateBuiltinChain [] inTy outTy =
+  if inTy == outTy
+    then Right ()
+    else Left ("Type mismatch: input " ++ show inTy ++ " does not match output " ++ show outTy)
+validateBuiltinChain (builtin :: rest) inTy outTy = do
+  -- Special validation for fillNull
+  case builtin of
+    BFillNull arg => do
+      -- fillNull requires Maybe T input
+      case inTy of
+        TMaybe innerTy => do
+          -- Validate argument matches inner type
+          validateFillNullArg arg innerTy
+          -- Continue with unwrapped type
+          let nextTy = builtinOutputTy builtin inTy
+          validateBuiltinChain rest nextTy outTy
+        _ => Left ("fillNull requires Maybe type, got " ++ show inTy)
+    _ => do
+      -- Other builtins: compute output and continue
+      let nextTy = builtinOutputTy builtin inTy
+      validateBuiltinChain rest nextTy outTy
 
 -- Check if type is nullable (needed for inferExprTy)
 isNullableTy : Ty -> Bool
@@ -309,6 +352,7 @@ inferExprTy ctx s (SAdd _ l r) = inferExprTy ctx s l
 inferExprTy ctx s (SSub _ l r) = inferExprTy ctx s l
 inferExprTy ctx s (SMul _ l r) = inferExprTy ctx s l
 inferExprTy ctx s (SDiv _ l r) = inferExprTy ctx s l
+inferExprTy ctx s (SMod _ l r) = inferExprTy ctx s l
 -- Cast: the target type is the result type
 inferExprTy ctx s (SCast _ expr targetTy) = toCoreTy targetTy
 inferExprTy ctx s _ = TString  -- Default fallback
@@ -355,6 +399,7 @@ getExprSources (SAdd _ e1 e2) = getExprSources e1 ++ getExprSources e2
 getExprSources (SSub _ e1 e2) = getExprSources e1 ++ getExprSources e2
 getExprSources (SMul _ e1 e2) = getExprSources e1 ++ getExprSources e2
 getExprSources (SDiv _ e1 e2) = getExprSources e1 ++ getExprSources e2
+getExprSources (SMod _ e1 e2) = getExprSources e1 ++ getExprSources e2
 getExprSources (SConcat _ e1 e2) = getExprSources e1 ++ getExprSources e2
 getExprSources (SCast _ expr _) = getExprSources expr
 
@@ -400,7 +445,7 @@ data MapExprResult : Schema -> Type where
 elabMapExpr : Context -> Span -> (s : Schema) -> SExpr -> Result (MapExprResult s)
 
 -- Arithmetic operator enum
-data ArithOp = AOAdd | AOSub | AOMul | AODiv
+data ArithOp = AOAdd | AOSub | AOMul | AODiv | AOMod
 
 -- Forward declaration for arithmetic helper
 elabArithOp : Context -> Span -> (s : Schema) -> ArithOp -> SExpr -> SExpr -> Result (MapExprResult s)
@@ -561,6 +606,7 @@ applyArithOp AOAdd l r = MAdd l r
 applyArithOp AOSub l r = MSub l r
 applyArithOp AOMul l r = MMul l r
 applyArithOp AODiv l r = MDiv l r
+applyArithOp AOMod l r = MMod l r
 
 -- Check if two types are compatible for arithmetic
 -- Same exact type required (no implicit widening)
@@ -692,6 +738,7 @@ elabMapExpr ctx span s (SAdd _ left right) = elabArithOp ctx span s AOAdd left r
 elabMapExpr ctx span s (SSub _ left right) = elabArithOp ctx span s AOSub left right
 elabMapExpr ctx span s (SMul _ left right) = elabArithOp ctx span s AOMul left right
 elabMapExpr ctx span s (SDiv _ left right) = elabArithOp ctx span s AODiv left right
+elabMapExpr ctx span s (SMod _ left right) = elabArithOp ctx span s AOMod left right
 elabMapExpr ctx span s (SConcat _ left right) = do
   MkMapExprResult leftTy leftExpr <- elabMapExpr ctx span s left
   MkMapExprResult rightTy rightExpr <- elabMapExpr ctx span s right
@@ -768,7 +815,9 @@ elabOp ctx sIn (STransform span cols fn) =
     Just (fnInTy, fnOutTy) =>
       case findAllColsTy sIn cols fnInTy of
         Nothing => err (ParseError span ("Columns " ++ show cols ++ " must all be type " ++ show fnInTy ++ " for function '" ++ fn ++ "'"))
-        Just prf => ok (sIn ** Transform cols fn fnInTy prf Done)
+        Just prf =>
+          -- Compute output schema by updating transformed column types
+          ok (updateColTypes sIn cols fnOutTy ** Transform cols fn fnInTy fnOutTy prf Done)
 
 -- UniqueBy: deduplicate based on a column
 elabOp ctx sIn (SUniqueBy span expr) =
@@ -810,7 +859,7 @@ chain (Select names prf rest) p2 = Select names prf (chain rest p2)
 chain (Require names prf rest) p2 = Require names prf (chain rest p2)
 chain (Filter expr rest) p2 = Filter expr (chain rest p2)
 chain (MapFields assigns spreadCols rest) p2 = MapFields assigns spreadCols (chain rest p2)
-chain (Transform cols fn fnInTy prf rest) p2 = Transform cols fn fnInTy prf (chain rest p2)
+chain (Transform cols fn fnInTy fnOutTy prf rest) p2 = Transform cols fn fnInTy fnOutTy prf (chain rest p2)
 chain (UniqueBy col prf rest) p2 = UniqueBy col prf (chain rest p2)
 chain (Join tbl sRight lCol rCol prfL prfR rest) p2 = Join tbl sRight lCol rCol prfL prfR (chain rest p2)
 
@@ -975,8 +1024,11 @@ elabBindings ctx (b :: rest) =
   let ctx' = case (b.ty, b.val) of
                -- Constants: add to context
                (SBTyConst _, SBValConst v) => addConstant b.name v ctx
-               -- Column functions: register as scalar functions
-               (SBTyColFn inTy outTy, _) => addScalarFn b.name (toCoreTy inTy) (toCoreTy outTy) ctx
+               -- Column functions: validate and register as scalar functions
+               (SBTyColFn inTy outTy, SBValColFn chain) =>
+                 case validateBuiltinChain chain (toCoreTy inTy) (toCoreTy outTy) of
+                   Right () => addScalarFn b.name (toCoreTy inTy) (toCoreTy outTy) ctx
+                   Left err => ctx  -- Validation failed, skip this binding (error will be caught later)
                -- Pipelines don't modify context (validated separately)
                _ => ctx
   in elabBindings ctx' rest
@@ -1004,6 +1056,23 @@ validatePipelineBinding ctx b =
                 else err (SchemaMismatch b.span inName outName expectedOut sOut)
     _ => ok ()  -- Not a pipeline binding, skip
 
+-- Validate a column function binding
+validateColFnBinding : SBinding -> Result ()
+validateColFnBinding b =
+  case (b.ty, b.val) of
+    (SBTyColFn inTy outTy, SBValColFn chain) =>
+      case validateBuiltinChain chain (toCoreTy inTy) (toCoreTy outTy) of
+        Right () => ok ()
+        Left errMsg => Left (ParseError b.span errMsg)
+    _ => ok ()  -- Not a column function binding, skip
+
+-- Validate all column function bindings from new syntax
+validateColFnBindings : List SBinding -> Result ()
+validateColFnBindings [] = ok ()
+validateColFnBindings (b :: rest) = do
+  validateColFnBinding b
+  validateColFnBindings rest
+
 -- Validate all pipeline bindings from new syntax
 validatePipelineBindings : Context -> List SBinding -> Result ()
 validatePipelineBindings ctx [] = ok ()
@@ -1028,8 +1097,10 @@ elabProgram prog = do
   validateTransforms ctx (getTransforms prog)
   -- Seventh pass: elaborate let bindings (legacy syntax)
   validateLetBinds ctx (getTypeSigs prog) (getLetBinds prog)
-  -- Eighth pass: validate pipeline bindings (new syntax)
+  -- Eighth pass: validate column function bindings (new syntax)
+  validateColFnBindings (getBindings prog)
+  -- Ninth pass: validate pipeline bindings (new syntax)
   validatePipelineBindings ctx (getBindings prog)
-  -- Ninth pass: validate main entry point
+  -- Tenth pass: validate main entry point
   validateMain ctx (getMain prog)
   ok ctx

@@ -108,6 +108,7 @@ data MapExpr : Schema -> Ty -> Type where
   MSub : MapExpr s t -> MapExpr s t -> MapExpr s t
   MMul : MapExpr s t -> MapExpr s t -> MapExpr s t
   MDiv : MapExpr s t -> MapExpr s t -> MapExpr s t
+  MMod : MapExpr s t -> MapExpr s t -> MapExpr s t
   -- String concatenation
   MConcat : MapExpr s TString -> MapExpr s TString -> MapExpr s TString
   -- Cast expression: converts expr from type t1 to type t2
@@ -315,11 +316,13 @@ data Pipeline : Schema -> Schema -> Type where
 
   -- Transform: apply a function to specified columns
   -- Proof that all columns have the expected input type
+  -- Output schema has transformed columns updated to fnOutTy
   Transform : (cols : List String)
             -> (fn : String)
             -> (fnInTy : Ty)
+            -> (fnOutTy : Ty)
             -> (0 prf : AllHasColTy sIn cols fnInTy)
-            -> Pipeline sIn sOut
+            -> Pipeline (updateColTypes sIn cols fnOutTy) sOut
             -> Pipeline sIn sOut
 
   -- UniqueBy: deduplicate based on a column (proof it exists)

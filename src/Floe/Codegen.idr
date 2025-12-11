@@ -99,12 +99,31 @@ tyToPolars (TMaybe inner) = tyToPolars inner  -- Polars handles nullability sepa
 
 -- Resolve a builtin argument using constants (for string builtins, extract string value)
 resolveArg : List (String, ConstValue) -> BuiltinArg -> String
-resolveArg _ (BArgLit s) = s
+resolveArg _ (BArgStr s) = s
+resolveArg _ (BArgInt i) = show i
+resolveArg _ (BArgFloat f) = show f
+resolveArg _ (BArgBool b) = if b then "True" else "False"
 resolveArg consts (BArgRef name) =
   case lookup name consts of
     Just (ConstStr value) => value
     Just _ => name  -- non-string constant, use variable name
     Nothing => name  -- fallback to name if not found (will error at runtime)
+
+-- Resolve argument with proper type conversion for Polars literals
+resolveArgWithType : List (String, ConstValue) -> BuiltinArg -> String
+resolveArgWithType _ (BArgStr s) = "\"" ++ s ++ "\""
+resolveArgWithType _ (BArgInt i) = show i
+resolveArgWithType _ (BArgFloat f) = show f
+resolveArgWithType _ (BArgBool True) = "True"
+resolveArgWithType _ (BArgBool False) = "False"
+resolveArgWithType consts (BArgRef name) =
+  case lookup name consts of
+    Just (ConstStr value) => "\"" ++ value ++ "\""
+    Just (ConstInt i) => show i
+    Just (ConstFloat f) => show f
+    Just (ConstBool True) => "True"
+    Just (ConstBool False) => "False"
+    Nothing => name  -- fallback to variable name
 
 -- Generate Polars method call for a single builtin
 builtinToPolarsWithConsts : List (String, ConstValue) -> BuiltinCall -> String
@@ -118,6 +137,8 @@ builtinToPolarsWithConsts _ BToLowercase = ".str.to_lowercase()"
 builtinToPolarsWithConsts _ BToUppercase = ".str.to_uppercase()"
 builtinToPolarsWithConsts _ BTrim = ".str.strip_chars()"
 builtinToPolarsWithConsts _ BLenChars = ".str.len_chars()"
+builtinToPolarsWithConsts consts (BFillNull arg) =
+  ".fill_null(" ++ resolveArgWithType consts arg ++ ")"
 builtinToPolarsWithConsts _ (BCast ty) = ".cast(pl." ++ styToPolars ty ++ ")"
   where
     styToPolars : STy -> String
@@ -214,6 +235,7 @@ mapExprToPolars (MAdd l r) = "(" ++ mapExprToPolars l ++ " + " ++ mapExprToPolar
 mapExprToPolars (MSub l r) = "(" ++ mapExprToPolars l ++ " - " ++ mapExprToPolars r ++ ")"
 mapExprToPolars (MMul l r) = "(" ++ mapExprToPolars l ++ " * " ++ mapExprToPolars r ++ ")"
 mapExprToPolars (MDiv l r) = "(" ++ mapExprToPolars l ++ " / " ++ mapExprToPolars r ++ ")"
+mapExprToPolars (MMod l r) = "(" ++ mapExprToPolars l ++ " % " ++ mapExprToPolars r ++ ")"
 mapExprToPolars (MConcat l r) = "pl.concat_str([" ++ mapExprToPolars l ++ ", " ++ mapExprToPolars r ++ "])"
 mapExprToPolars (MCast targetTy expr) = "(" ++ mapExprToPolars expr ++ ").cast(pl." ++ tyToPolars targetTy ++ ")"
 
@@ -348,7 +370,7 @@ toPolarsWithConstsAndFns consts fnDefs (Filter expr rest) df =
   toPolarsWithConstsAndFns consts fnDefs rest (df ++ ".filter(" ++ filterExprToPolars expr ++ ")")
 toPolarsWithConstsAndFns consts fnDefs (MapFields assigns spreadCols rest) df =
   toPolarsWithConstsAndFns consts fnDefs rest (mapToPolarsWithContext consts fnDefs assigns spreadCols df)
-toPolarsWithConstsAndFns consts fnDefs (Transform cols fn _ _ rest) df =
+toPolarsWithConstsAndFns consts fnDefs (Transform cols fn _ _ _ rest) df =
   let exprs = joinWith ", " (map (transformColWithFnAndConsts consts fnDefs fn) cols)
   in toPolarsWithConstsAndFns consts fnDefs rest (df ++ ".with_columns(" ++ exprs ++ ")")
 toPolarsWithConstsAndFns consts fnDefs (UniqueBy col _ rest) df =

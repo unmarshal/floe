@@ -61,6 +61,7 @@ data Token
   | TMinus         -- -
   | TStar          -- *
   | TSlash         -- /
+  | TPercent       -- %
   | TIdent String
   | TStrLit String
   | TIntLit Integer
@@ -114,6 +115,7 @@ Show Token where
   show TMinus = "-"
   show TStar = "*"
   show TSlash = "/"
+  show TPercent = "%"
   show (TIdent s) = "identifier '" ++ s ++ "'"
   show (TStrLit s) = "string \"" ++ s ++ "\""
   show (TIntLit i) = "integer " ++ show i
@@ -167,6 +169,7 @@ Eq Token where
   TMinus == TMinus = True
   TStar == TStar = True
   TSlash == TSlash = True
+  TPercent == TPercent = True
   TIdent x == TIdent y = x == y
   TStrLit x == TStrLit y = x == y
   TIntLit x == TIntLit y = x == y
@@ -359,6 +362,7 @@ lexOne st =
     ('+' :: _) => Right (MkTok sp TPlus, advance st)
     ('*' :: _) => Right (MkTok sp TStar, advance st)
     ('/' :: _) => Right (MkTok sp TSlash, advance st)
+    ('%' :: _) => Right (MkTok sp TPercent, advance st)
     ('"' :: _) => do
       (s, st') <- lexString st
       let endSpan = MkSpan sp.line sp.col st'.line st'.col
@@ -621,7 +625,7 @@ pFieldListComma st = do
 -- List of all builtin names for lookahead (needed before mutual block)
 -- DSL uses camelCase (Haskell-style), codegen emits snake_case for Python/Polars
 builtinNames : List String
-builtinNames = ["stripPrefix", "stripSuffix", "replace", "toLowercase", "toUppercase", "trim", "cast", "lenChars"]
+builtinNames = ["stripPrefix", "stripSuffix", "replace", "toLowercase", "toUppercase", "trim", "cast", "lenChars", "fillNull"]
 
 -- Check if identifier is a builtin
 isBuiltinName : String -> Bool
@@ -693,13 +697,14 @@ mutual
   parseBuiltinNoArg "lenChars" _ = Right BLenChars
   parseBuiltinNoArg name sp = Left (ParseError sp ("Builtin '" ++ name ++ "' requires arguments, use in fn definition instead"))
 
-  -- Parse multiplicative operator (* /)
+  -- Parse multiplicative operator (* / %)
   pMulOp : ParseState -> Maybe (Span -> SExpr -> SExpr -> SExpr, ParseState)
   pMulOp st =
     let tok = currentTok st
     in case tok.tok of
          TStar => Just (\sp, l, r => SMul sp l r, advanceP st)
          TSlash => Just (\sp, l, r => SDiv sp l r, advanceP st)
+         TPercent => Just (\sp, l, r => SMod sp l r, advanceP st)
          _ => Nothing
 
   -- Parse cast expression (expr as Type)
@@ -960,14 +965,18 @@ pLetBind st = do
 -- Builtin Call Parser: stripPrefix "arg" or toLowercase
 -----------------------------------------------------------
 
--- Parse a builtin argument: either "literal" or constant_name
+-- Parse a builtin argument: literal value or constant reference
 pBuiltinArg : Parser BuiltinArg
 pBuiltinArg st =
   let tok = currentTok st
   in case tok.tok of
-    TStrLit s => Right (BArgLit s, advanceP st)
+    TStrLit s => Right (BArgStr s, advanceP st)
+    TIntLit i => Right (BArgInt i, advanceP st)
+    TFloatLit f => Right (BArgFloat f, advanceP st)
+    TIdent "True" => Right (BArgBool True, advanceP st)
+    TIdent "False" => Right (BArgBool False, advanceP st)
     TIdent name => Right (BArgRef name, advanceP st)
-    _ => Left (ParseError tok.span ("Expected string literal or constant name, got " ++ show tok.tok))
+    _ => Left (ParseError tok.span ("Expected literal value or constant name, got " ++ show tok.tok))
 
 -- Parse a single builtin call with its arguments
 pBuiltinCall : Parser BuiltinCall
@@ -989,6 +998,9 @@ pBuiltinCall st = do
     "toUppercase" => Right (BToUppercase, st)
     "trim" => Right (BTrim, st)
     "lenChars" => Right (BLenChars, st)
+    "fillNull" => do
+      (arg, st) <- pBuiltinArg st
+      Right (BFillNull arg, st)
     "cast" => do
       (ty, st) <- pType st
       Right (BCast ty, st)
@@ -1145,37 +1157,52 @@ isPrimitiveType _ = False
 -- Returns either a primitive type (for constants) or a schema->schema type (for pipelines)
 pBindingType : Parser SBindingTy
 pBindingType st = do
-  (firstTy, st') <- pIdent st
-  -- Check if it's a primitive type or a schema name
-  if isToken TArrow st'
-    then do
-      -- It's a function type: InSchema -> OutSchema or PrimTy -> PrimTy
-      ((), st'') <- expect TArrow st'
-      (secondTy, st''') <- pIdent st''
-      -- Check if both are primitive types (column function) or schema names (pipeline)
-      case (parsePrimTy firstTy, parsePrimTy secondTy) of
-        (Just inTy, Just outTy) => Right (SBTyColFn inTy outTy, st''')
-        _ => Right (SBTyPipeline firstTy secondTy, st''')
-    else
-      -- It's a simple type (constant)
-      case parsePrimTy firstTy of
-        Just ty => Right (SBTyConst ty, st')
-        Nothing => Left (ParseError (currentTok st).span ("Unknown type: " ++ firstTy ++ ". Expected Int64, Float64, String, Bool, etc."))
+  -- Peek at first token to decide parsing strategy
+  let tok = currentTok st
+  case tok.tok of
+    TIdent name =>
+      if isKnownType name
+        then do
+          -- It's a known type keyword, parse as type
+          (firstTy, st') <- pType st
+          if isToken TArrow st'
+            then do
+              -- Function type
+              ((), st'') <- expect TArrow st'
+              (secondTy, st''') <- pType st''
+              Right (SBTyColFn firstTy secondTy, st''')
+            else
+              -- Constant type
+              Right (SBTyConst firstTy, st')
+        else do
+          -- Unknown identifier - assume it's a schema name for pipeline
+          let st' = advanceP st
+          if isToken TArrow st'
+            then do
+              ((), st'') <- expect TArrow st'
+              (outSchema, st''') <- pIdent st''
+              Right (SBTyPipeline name outSchema, st''')
+            else
+              Left (ParseError tok.span ("Unknown type: " ++ name))
+    _ => Left (ParseError tok.span "Expected type or schema name")
   where
-    parsePrimTy : String -> Maybe STy
-    parsePrimTy "Int8" = Just SInt8
-    parsePrimTy "Int16" = Just SInt16
-    parsePrimTy "Int32" = Just SInt32
-    parsePrimTy "Int64" = Just SInt64
-    parsePrimTy "UInt8" = Just SUInt8
-    parsePrimTy "UInt16" = Just SUInt16
-    parsePrimTy "UInt32" = Just SUInt32
-    parsePrimTy "UInt64" = Just SUInt64
-    parsePrimTy "Float32" = Just SFloat32
-    parsePrimTy "Float64" = Just SFloat64
-    parsePrimTy "String" = Just SString
-    parsePrimTy "Bool" = Just SBool
-    parsePrimTy _ = Nothing
+    isKnownType : String -> Bool
+    isKnownType "Maybe" = True
+    isKnownType "List" = True
+    isKnownType "Int8" = True
+    isKnownType "Int16" = True
+    isKnownType "Int32" = True
+    isKnownType "Int64" = True
+    isKnownType "UInt8" = True
+    isKnownType "UInt16" = True
+    isKnownType "UInt32" = True
+    isKnownType "UInt64" = True
+    isKnownType "Float32" = True
+    isKnownType "Float64" = True
+    isKnownType "String" = True
+    isKnownType "Bool" = True
+    isKnownType "Decimal" = True
+    isKnownType _ = False
 
 -- Parse a binding value after '='
 pBindingValue : SBindingTy -> Parser SBindingVal

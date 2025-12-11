@@ -317,8 +317,8 @@ testCodegenLenChars : TestResult
 testCodegenLenChars =
   let src = """
 schema A { name: String, }
-schema B { name: String, }
-let len : String -> String = lenChars
+schema B { name: Int64, }
+let len : String -> Int64 = lenChars
 let t : A -> B = transform [name] len
 """
   in case generateCode src of

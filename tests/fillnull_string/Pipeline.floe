@@ -1,0 +1,21 @@
+-- Test fillNull with Maybe String -> String
+
+schema Input {
+    id: Int64,
+    name: Maybe String,
+}
+
+schema Output {
+    id: Int64,
+    name: String,
+}
+
+let fillName : Maybe String -> String = fillNull "Unknown"
+
+let transform : Input -> Output =
+    transform [name] fillName
+
+main = do
+    data <- read "input.parquet" as Input
+    result <- data |> transform
+    sink "output.parquet" result
