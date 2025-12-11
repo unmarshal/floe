@@ -34,6 +34,19 @@ The compiler proves:
 - After rename, `publication_id` exists (and `work_id` doesn't)
 - The final schema exactly matches `Authorship`
 
+If you make a mistake, the compiler catches it:
+
+```floe
+fn transform :: WorksAuthorship -> Authorship
+fn transform =
+    rename work_id publication_id >>
+    drop [work_id]  -- ERROR: work_id no longer exists!
+```
+
+```
+line 16, col 5: One or more columns not found for drop
+```
+
 ## Quick Start
 
 ```bash
