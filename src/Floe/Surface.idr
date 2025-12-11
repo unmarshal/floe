@@ -415,20 +415,27 @@ record SFnDef where
   name : String
   chain : List BuiltinCall
 
--- A step in main: read, pipe through function, or write
+-- Expression in main (things that produce values)
 public export
-data SMainStep
-  = SRead Span String String        -- read "file" as Schema (or read param as Schema)
-  | SPipeThrough Span String        -- |> function_name
-  | SWrite Span String              -- write "file" (or write param)
+data SMainExpr
+  = SMRead Span String String          -- read "file" as Schema
+  | SMApply Span String SMainExpr      -- apply transform expr
+  | SMPipe Span SMainExpr String       -- expr |> transform
+  | SMVar Span String                  -- variable reference
 
--- Main entry point: fn main [params] = body
+-- Statement in main (do notation)
+public export
+data SMainStmt
+  = SMBind Span String SMainExpr       -- var <- expr
+  | SMSink Span String SMainExpr       -- sink "file" expr
+
+-- Main entry point: fn main [params] = do { stmts }
 public export
 record SMain where
   constructor MkSMain
   span : Span
-  params : List String      -- optional CLI params (e.g., input, output)
-  body : List SMainStep     -- sequence of read/pipe/write operations
+  params : List String                 -- optional CLI params (e.g., input, output)
+  body : List SMainStmt                -- do notation statements
 
 -- Transform definition (legacy style)
 public export

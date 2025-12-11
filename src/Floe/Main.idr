@@ -20,14 +20,30 @@ import Data.List
 -- Build GeneratedProgram from parsed/elaborated program
 -----------------------------------------------------------
 
--- Convert SMainStep to EntryStep (with error reporting)
-mainStepToEntry : Context -> SMainStep -> Either FloeError EntryStep
-mainStepToEntry ctx (SRead sp file schemaName) = do
+-- Compile main expression to list of entry steps
+-- This flattens the do notation into a sequence of read/pipe/write operations
+compileMainExpr : Context -> SMainExpr -> Either FloeError (List EntryStep)
+compileMainExpr ctx (SMRead sp file schemaName) = do
   schema <- note (ParseError sp ("Schema '" ++ schemaName ++ "' is not defined"))
                  (lookupSchema schemaName ctx)
-  pure (ERead file schemaName schema)
-mainStepToEntry ctx (SPipeThrough _ fnName) = Right (EPipe fnName)
-mainStepToEntry ctx (SWrite _ file) = Right (EWrite file)
+  pure [ERead file schemaName schema]
+compileMainExpr ctx (SMApply sp transform expr) = do
+  steps <- compileMainExpr ctx expr
+  pure (steps ++ [EPipe transform])
+compileMainExpr ctx (SMPipe sp expr transform) = do
+  steps <- compileMainExpr ctx expr
+  pure (steps ++ [EPipe transform])
+compileMainExpr ctx (SMVar sp name) =
+  -- Variable references should have been inlined during elaboration
+  Left (ParseError sp "Unexpected variable reference in main")
+
+-- Compile main statement to entry steps
+compileMainStmt : Context -> SMainStmt -> Either FloeError (List EntryStep)
+compileMainStmt ctx (SMBind sp name expr) =
+  compileMainExpr ctx expr  -- Bindings get inlined, just compile the expression
+compileMainStmt ctx (SMSink sp file expr) = do
+  steps <- compileMainExpr ctx expr
+  pure (steps ++ [EWrite file])
 
 -- Sequence a list of Either into Either of list
 sequenceEither : List (Either e a) -> Either e (List a)
@@ -98,7 +114,8 @@ buildProgram opts ctx prog = do
   (params, steps) <- case getMain prog of
     Nothing => pure ([], [])
     Just m => do
-      steps <- sequenceEither (map (mainStepToEntry ctx) m.body)
+      stepsLists <- sequenceEither (map (compileMainStmt ctx) m.body)
+      let steps = concat stepsLists  -- Flatten list of lists
       pure (m.params, steps)
   pure (MkGeneratedProgram opts consts fnDefs tables functions params steps)
 
