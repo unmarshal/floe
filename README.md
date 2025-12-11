@@ -63,6 +63,24 @@ idris2 --build floe.ipkg
 make test
 ```
 
+## Not a General-Purpose Language
+
+Floe intentionally does not support arbitrary computation. It's a DSL for columnar data transformations, not a programming language.
+
+Why? Because columnar operations (rename, drop, filter, join, map) can be:
+1. **Statically verified** - The compiler proves your pipeline is valid
+2. **Efficiently executed** - Operations map directly to Polars/SQL, enabling vectorization
+3. **Easily optimized** - A restricted language allows aggressive optimization
+
+If you need custom logic, define a scalar function with builtins:
+
+```floe
+fn normalizeUrl :: String -> String
+fn normalizeUrl = trim >> toLowercase >> stripPrefix "https://"
+```
+
+For anything more complex, write it in Python and call it from your pipeline.
+
 ## Status
 
 Prototype. Syntax is in flux, but inspired by Elm. Currently generates Python/Polars code. See [CLAUDE.md](CLAUDE.md) for architecture details.

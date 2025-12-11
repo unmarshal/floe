@@ -1,0 +1,42 @@
+-- Builtin functions example: String transformations
+
+schema RawProduct {
+    sku: String,
+    name: String,
+    description: String,
+    category: String,
+}
+
+schema CleanProduct {
+    sku: String,
+    name: String,
+    description: String,
+    category: String,
+    name_length: Int64,
+}
+
+-- Strip URL prefix from IDs
+fn stripPrefix :: String -> String
+fn stripPrefix = stripPrefix "https://example.com/products/"
+
+-- Normalize text: trim whitespace and lowercase
+fn normalizeText :: String -> String
+fn normalizeText = trim >> toLowercase
+
+-- Chain multiple transformations
+fn cleanCategory :: String -> String
+fn cleanCategory = trim >> toLowercase >> replace " " "_"
+
+-- Apply builtins to clean product data
+fn cleanProduct :: RawProduct -> CleanProduct
+fn cleanProduct =
+    transform [sku] stripPrefix >>
+    transform [name, description] normalizeText >>
+    transform [category] cleanCategory >>
+    map {
+        sku: .sku,
+        name: .name,
+        description: .description,
+        category: .category,
+        name_length: lenChars .name
+    }
