@@ -126,7 +126,7 @@ Floe intentionally does not support arbitrary computation. It's a DSL for column
 
 Why? Because columnar operations (rename, drop, filter, join, map) can be:
 1. **Statically verified** - The compiler proves your pipeline is valid
-2. **Efficiently executed** - Operations map directly to Polars/SQL, enabling vectorization
+2. **Efficiently executed** - Operations map directly to Polars, enabling vectorized columnar execution
 3. **Easily optimized** - A restricted language allows aggressive optimization
 
 If you need custom logic, define a scalar function with builtins:
