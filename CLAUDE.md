@@ -64,7 +64,7 @@ The Typed IR uses dependent types to encode schema correctness. When elaboration
 
 ## DSL Syntax
 
-```floe
+```idris
 -- Schema definitions
 schema RawUser {
     user_id: String,
