@@ -51,9 +51,55 @@ partitionCountHelper =
   , "    \"\"\"Estimate partition count based on parquet metadata.\"\"\""
   , "    metadata = pq.read_metadata(file_path)"
   , "    row_count = metadata.num_rows"
-  , "    # Aim for ~1M rows per partition, minimum 1, maximum 256"
-  , "    count = max(1, min(256, row_count // target_rows_per_partition))"
+  , "    # Aim for target rows per partition, minimum 1, maximum 128"
+  , "    # Keep partition count low to avoid buffering in PartitionByKey"
+  , "    count = max(1, min(128, row_count // target_rows_per_partition))"
   , "    return count"
+  , ""
+  ]
+
+-- Helper function to validate parquet schema from metadata (no data loading)
+schemaValidationHelper : List String
+schemaValidationHelper =
+  [ "def _validate_parquet_schema(file_path, expected_schema):"
+  , "    \"\"\"Validate parquet schema and null counts from file metadata without loading data.\"\"\""
+  , "    import pyarrow as pa"
+  , "    metadata = pq.read_metadata(file_path)"
+  , "    schema = pq.read_schema(file_path)"
+  , "    _int_types = {pa.int8(), pa.int16(), pa.int32(), pa.int64(), pa.uint8(), pa.uint16(), pa.uint32(), pa.uint64()}"
+  , "    _float_types = {pa.float32(), pa.float64()}"
+  , "    def _check_type(actual, expected):"
+  , "        if expected == 'int': return actual in _int_types"
+  , "        if expected == 'float': return actual in _float_types"
+  , "        if expected == 'string': return actual == pa.string() or actual == pa.large_string()"
+  , "        if expected == 'bool': return actual == pa.bool_()"
+  , "        if expected.startswith('decimal:'):"
+  , "            parts = expected.split(':')"
+  , "            return pa.types.is_decimal(actual) and actual.scale == int(parts[2])"
+  , "        if expected == 'list': return pa.types.is_list(actual)"
+  , "        return False"
+  , "    # Build column name to index mapping"
+  , "    col_indices = {schema.field(i).name: i for i in range(len(schema))}"
+  , "    for col, exp_type in expected_schema.items():"
+  , "        if col not in schema.names:"
+  , "            raise ValueError(f\"Missing column: {col}\")"
+  , "        actual_type = schema.field(col).type"
+  , "        # Check if column is nullable (has 'maybe:' prefix)"
+  , "        is_nullable = exp_type.startswith('maybe:')"
+  , "        if is_nullable:"
+  , "            exp_type = exp_type[6:]  # Strip 'maybe:' prefix"
+  , "        if not _check_type(actual_type, exp_type):"
+  , "            raise TypeError(f\"Column '{col}': expected {exp_type}, got {actual_type}\")"
+  , "        # For non-nullable columns, check null counts from row group statistics"
+  , "        if not is_nullable:"
+  , "            col_idx = col_indices[col]"
+  , "            total_nulls = 0"
+  , "            for rg in range(metadata.num_row_groups):"
+  , "                col_meta = metadata.row_group(rg).column(col_idx)"
+  , "                if col_meta.is_stats_set and col_meta.statistics.null_count is not None:"
+  , "                    total_nulls += col_meta.statistics.null_count"
+  , "            if total_nulls > 0:"
+  , "                raise ValueError(f\"Column '{col}' has {total_nulls} null values but is declared non-nullable\")"
   , ""
   ]
 
@@ -263,21 +309,27 @@ isIntermediateTableExpr sinkOutputs (STPipe _ inner _) = isIntermediateTableExpr
 isIntermediateTableExpr _ (STVar _ _) = False
 
 -- For table bindings that use STableExpr (new style)
--- Validates external inputs, skips validation for intermediates
+-- Always uses scan_parquet for streaming/lazy execution
 generateTableBindFromExprWithValidation : List String -> String -> STableExpr -> String
 generateTableBindFromExprWithValidation sinkOutputs name expr =
   name ++ " = " ++ generate name expr
   where
     generate : String -> STableExpr -> String
     generate n (STRead _ file schema) =
-      if isIntermediateFile sinkOutputs file
-        then -- Intermediate file: trust compiler, use scan_parquet
-          "pl.scan_parquet(\"" ++ file ++ "\")"
-        else -- External input: validate schema at read time
-          "pl.read_parquet(\"" ++ file ++ "\").pipe(_validate_" ++ n ++ ").lazy()"
+      -- Always use scan_parquet for streaming
+      "pl.scan_parquet(\"" ++ file ++ "\")"
     generate n (STPipe _ inner fnName) =
       generate n inner ++ ".pipe(" ++ fnName ++ ")"
     generate n (STVar _ vname) = vname
+
+-- Generate schema validation call for an external input file
+-- Uses tb.file and tb.schema from TableExprBinding
+generateSchemaValidationCall : List String -> TableExprBinding -> Maybe String
+generateSchemaValidationCall sinkOutputs tb =
+  if isIntermediateFile sinkOutputs tb.file
+    then Nothing  -- Skip validation for intermediate files (compiler guarantees correctness)
+    else let schemaDict = schemaToPolarsDict tb.schema
+         in Just ("_validate_parquet_schema(\"" ++ tb.file ++ "\", " ++ schemaDict ++ ")")
 
 -- For table bindings without validation (plan mode)
 generateTableBindFromExpr : String -> STableExpr -> String
@@ -320,20 +372,19 @@ generatePartitionExpr file _ =
   -- Fallback, shouldn't happen
   ("pl.PartitionByKey(\"" ++ file ++ "\", by=\"_partition_key\", include_key=False)", Nothing)
 
--- Generate a lazy sink query
-generateLazySink : Nat -> SinkDef -> String
-generateLazySink idx sink =
-  let queryName = "_q" ++ show idx
-      tableExpr = generateTableExpr sink.tableExpr
+-- Generate a streaming sink (executes immediately with engine="streaming")
+generateStreamingSink : SinkDef -> String
+generateStreamingSink sink =
+  let tableExpr = generateTableExpr sink.tableExpr
   in case sink.partitionBy of
     Nothing =>
-      queryName ++ " = " ++ tableExpr ++ ".sink_parquet(\"" ++ sink.file ++ "\", lazy=True)"
+      tableExpr ++ ".sink_parquet(\"" ++ sink.file ++ "\", engine=\"streaming\")"
     Just partExpr =>
       let (partByKey, withCols) = generatePartitionExpr sink.file partExpr
           baseExpr = case withCols of
             Nothing => tableExpr
             Just wc => tableExpr ++ wc
-      in queryName ++ " = " ++ baseExpr ++ ".sink_parquet(" ++ partByKey ++ ", lazy=True)"
+      in baseExpr ++ ".sink_parquet(" ++ partByKey ++ ", engine=\"streaming\")"
 
 -----------------------------------------------------------
 -- Phased Sink Execution (for intermediate file dependencies)
@@ -396,15 +447,12 @@ orderSinkPhases bindings sinks =
          else canRun :: orderSinkPhasesHelper stillWaiting (availableFiles ++ map (.file) canRun)
 
 -- Generate code for a single phase of sinks
-generateSinkPhase : Nat -> List SinkDef -> List String
-generateSinkPhase startIdx [] = []
-generateSinkPhase startIdx sinks =
-  let n = length sinks
-      indices = take n [startIdx..]
-      queryNames = map (\i => "_q" ++ show i) indices
-      sinkLines = zipWith generateLazySink indices sinks
-      collectLine = "pl.collect_all([" ++ joinWith ", " queryNames ++ "])"
-  in sinkLines ++ [collectLine, ""]
+-- Each sink executes immediately with engine="streaming" (no collect_all needed)
+generateSinkPhase : List SinkDef -> List String
+generateSinkPhase [] = []
+generateSinkPhase sinks =
+  let sinkLines = map generateStreamingSink sinks
+  in sinkLines ++ [""]
 
 -- Generate all sinks with phased collect_all (or explain for --plan mode)
 generateSinks : Bool -> List TableExprBinding -> List SinkDef -> List String
@@ -422,17 +470,9 @@ generateSinks showPlan bindings sinks =
              in queryName ++ " = " ++ tableExpr) indices sinks
            explainLines = map (\q => "print(\"=== Query Plan for " ++ q ++ " ===\")\nprint(" ++ q ++ ".explain())") queryNames
        in planLines ++ [""] ++ explainLines
-     else -- Normal mode: execute sinks in phases
+     else -- Normal mode: execute sinks in phases with streaming engine
        let phases = orderSinkPhases bindings sinks
-           -- Generate each phase with proper indexing
-       in generatePhasesWithIndex 0 phases
-  where
-    generatePhasesWithIndex : Nat -> List (List SinkDef) -> List String
-    generatePhasesWithIndex _ [] = []
-    generatePhasesWithIndex idx (phase :: rest) =
-      let phaseCode = generateSinkPhase idx phase
-          nextIdx = idx + length phase
-      in phaseCode ++ generatePhasesWithIndex nextIdx rest
+       in concatMap generateSinkPhase phases
 
 -----------------------------------------------------------
 -- Full Program Rendering
@@ -462,12 +502,23 @@ generatePartitionCountCalc Nothing = []
 generatePartitionCountCalc (Just file) =
   ["_partition_count = _estimate_partition_count(\"" ++ file ++ "\")", ""]
 
+-- Check if any table bindings have external inputs that need validation
+hasExternalInputs : List String -> List TableExprBinding -> Bool
+hasExternalInputs sinkOutputs bindings =
+  any (\tb => not (isIntermediateTableExpr sinkOutputs tb.expr)) bindings
+
 export covering
 renderPolarsPython : GeneratedProgram -> String
 renderPolarsPython prog =
   let needsAuto = anyUsesAuto prog.sinks
-      header = if needsAuto then preambleWithPyarrow else preamble
+      -- Sink output files (to identify intermediate vs external inputs)
+      sinkOutputs = map (.file) prog.sinks
+      -- Check if we need pyarrow (for auto partitioning or schema validation)
+      needsValidation = not prog.options.showPlan && not prog.options.lenient && hasExternalInputs sinkOutputs prog.tableExprs
+      needsPyarrow = needsAuto || needsValidation
+      header = if needsPyarrow then preambleWithPyarrow else preamble
       partitionHelper = if needsAuto then partitionCountHelper else []
+      schemaHelper = if needsValidation then schemaValidationHelper else []
       consts = generateConsts prog.consts
       strict = not prog.options.lenient
       showPlan = prog.options.showPlan
@@ -478,17 +529,15 @@ renderPolarsPython prog =
                            else []
       -- Functions must come before new-style table bindings (which may reference them)
       fns = concatMap (generateFn prog.consts prog.fnDefs) prog.functions
-      -- Sink output files (to identify intermediate vs external inputs)
-      sinkOutputs = map (.file) prog.sinks
-      -- Validation functions for external inputs (not intermediates)
-      validationFns = if showPlan
-                      then []
-                      else concatMap (\tb => generateValidationFn tb.name tb.schema strict)
-                             (filter (\tb => not (isIntermediateTableExpr sinkOutputs tb.expr)) prog.tableExprs)
+      -- Schema validation calls for external inputs (before table bindings)
+      validationCalls : List String
+      validationCalls = if showPlan || prog.options.lenient
+                        then []
+                        else mapMaybe (generateSchemaValidationCall sinkOutputs) prog.tableExprs
+      validationSection : List String
+      validationSection = if null validationCalls then [] else validationCalls ++ [""]
       -- New-style table expression bindings (lazy, for sinks) - come after functions
-      newTables = if showPlan
-                    then map (\tb => generateTableBindFromExpr tb.name tb.expr) prog.tableExprs
-                    else map (\tb => generateTableBindFromExprWithValidation sinkOutputs tb.name tb.expr) prog.tableExprs
+      newTables = map (\tb => generateTableBindFromExprWithValidation sinkOutputs tb.name tb.expr) prog.tableExprs
       newTableSection = if not (null prog.sinks) && not (null newTables)
                         then newTables ++ [""]
                         else []
@@ -497,14 +546,16 @@ renderPolarsPython prog =
                            then generatePartitionCountCalc (findAutoSourceFile prog.tableExprs prog.sinks)
                            else []
       -- New declarative sinks (preferred)
+      sinkSection : List String
       sinkSection = if null prog.sinks
                     then []
                     else generateSinks showPlan prog.tableExprs prog.sinks
       -- Legacy main-based entry (for backwards compatibility)
+      entry : List String
       entry = if null prog.entrySteps
               then []
               else generateEntry prog.entryParams prog.entrySteps strict
-  in lines (header ++ partitionHelper ++ consts ++ legacyTableSection ++ fns ++ validationFns ++ newTableSection ++ partitionCountCalc ++ sinkSection ++ entry)
+  in lines (header ++ partitionHelper ++ schemaHelper ++ consts ++ legacyTableSection ++ fns ++ validationSection ++ newTableSection ++ partitionCountCalc ++ sinkSection ++ entry)
 
 -----------------------------------------------------------
 -- Backend Instance

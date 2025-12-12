@@ -15,7 +15,7 @@ inputs = {
 
 # This test expects a runtime failure due to type mismatch
 expect_failure = True
-expected_error = "Column 'amount': expected decimal:10:2, got Float64"
+expected_error = "Column 'amount': expected decimal:10:2, got double"
 
 # Not used since we expect failure, but required by test runner
 expected_output = {}

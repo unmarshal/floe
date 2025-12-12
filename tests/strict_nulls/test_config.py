@@ -2,6 +2,7 @@
 #
 # Verifies that runtime validation catches null values in columns
 # that are declared as non-nullable in the schema.
+# Uses parquet row group statistics (null_count) - no data loading required.
 
 inputs = {
     "input.parquet": {

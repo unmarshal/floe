@@ -46,7 +46,7 @@ tyToTypeFamily (TDecimal p s) = "decimal:" ++ show p ++ ":" ++ show s
 tyToTypeFamily TString = "string"
 tyToTypeFamily TBool = "bool"
 tyToTypeFamily (TList t) = "list"
-tyToTypeFamily (TMaybe t) = tyToTypeFamily t  -- Polars handles nullability separately
+tyToTypeFamily (TMaybe t) = "maybe:" ++ tyToTypeFamily t  -- Track nullability for validation
 
 -- Generate schema dict for validation (type family based)
 public export

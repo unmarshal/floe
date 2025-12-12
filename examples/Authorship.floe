@@ -68,8 +68,8 @@ let stripOAPrefix : String -> String = stripPrefix "https://openalex.org/"
 -- Fill nulls with empty string (for nullable String columns)
 let fillEmpty : Maybe String -> String = fillNull ""
 
--- Initial transforms: rename, fill nulls, strip prefixes, create hash, deduplicate
-let initialTransforms : WorkAuthorship -> TransformedAuthorship =
+-- Streaming transforms: rename, fill nulls, strip prefixes, create hash (NO uniqueBy - that buffers!)
+let streamingTransforms : WorkAuthorship -> TransformedAuthorship =
     rename work_id publication_id >>
     rename institution_id affiliated_organization_id >>
     transform [author_id, affiliated_organization_id] fillEmpty >>
@@ -81,7 +81,10 @@ let initialTransforms : WorkAuthorship -> TransformedAuthorship =
         affiliated_organization_id: .affiliated_organization_id,
         raw_affiliation_strings: .raw_affiliation_strings,
         authorship_id: hash [.publication_id, .author_id, .affiliated_organization_id]
-    } >>
+    }
+
+-- Per-partition dedup (applied after partitioning by authorship_id % N)
+let dedup : TransformedAuthorship -> TransformedAuthorship =
     uniqueBy .authorship_id
 
 -- Generate authorship nodes
@@ -115,14 +118,18 @@ let affiliationWith : TransformedAuthorship -> AffiliationWith =
     }
 
 -- === Pipeline execution ===
--- Phase 1: Transform raw data and write partitioned output
--- Partitioning by authorship_id % auto allows parallel dedup processing
-let transformed = read "works_authorships.parquet" as WorkAuthorship |> initialTransforms
-sink "transformed_authorship/" transformed partitionBy (.authorship_id % auto)
 
--- Phase 2: Read from partitioned directory and generate all outputs
--- Polars scan_parquet automatically handles partitioned datasets
--- The compiler detects the dependency on transformed_authorship/ and executes Phase 1 first
+-- Phase 1: Streaming partition (NO uniqueBy - that would buffer everything)
+let partitioned = read "works_authorships.parquet" as WorkAuthorship |> streamingTransforms
+sink "partitioned_authorship/" partitioned partitionBy (.authorship_id % auto)
+
+-- Phase 2: Per-partition dedup
+-- Since we partitioned by authorship_id % N, all rows with same authorship_id are in same partition
+-- So per-partition uniqueBy = global uniqueBy, but memory-bounded
+let deduped = read "partitioned_authorship/**/*.parquet" as TransformedAuthorship |> dedup
+sink "transformed_authorship/" deduped partitionBy (.authorship_id % auto)
+
+-- Phase 3: Generate all outputs from deduped data
 let nodes = read "transformed_authorship/**/*.parquet" as TransformedAuthorship |> authorshipNodes
 let contributors = read "transformed_authorship/**/*.parquet" as TransformedAuthorship |> contributorTo
 let authors = read "transformed_authorship/**/*.parquet" as TransformedAuthorship |> authorOf

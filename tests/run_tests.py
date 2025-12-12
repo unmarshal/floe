@@ -32,8 +32,8 @@ def load_test_config(test_dir: Path):
     return module
 
 
-def run_test(test_dir: Path) -> tuple[bool, str]:
-    """Run a single test. Returns (passed, message)."""
+def run_test(test_dir: Path) -> tuple[bool | None, str]:
+    """Run a single test. Returns (passed, message). None means skipped."""
     pipeline_file = test_dir / "Pipeline.floe"
     generated_file = test_dir / "generated.py"
 
@@ -44,6 +44,11 @@ def run_test(test_dir: Path) -> tuple[bool, str]:
     config = load_test_config(test_dir)
     if config is None:
         return False, "No test_config.py found"
+
+    # Check if test should be skipped
+    if hasattr(config, "skip") and config.skip:
+        reason = getattr(config, "skip_reason", "No reason given")
+        return None, reason
 
     # Generate input parquet files from config
     for filename, data in config.inputs.items():
@@ -190,7 +195,10 @@ def main():
 
         success, message = run_test(test_dir)
 
-        if success:
+        if success is None:
+            print(f"  SKIP  {test_dir.name} ({message})")
+            skipped += 1
+        elif success:
             print(f"  PASS  {test_dir.name}")
             passed += 1
         else:
