@@ -2,6 +2,8 @@ package floe
 
 depends = contrib
 
+options = "-Werror"
+
 sourcedir = "src"
 
 modules = Floe.Types

@@ -2,6 +2,8 @@ package floe-test
 
 depends = contrib
 
+options = "-Werror"
+
 sourcedir = "src"
 
 modules = Floe.Types

@@ -167,7 +167,7 @@ builtinToPolars = builtinToPolarsWithConsts []
 -----------------------------------------------------------
 
 -- Generate Polars code from a typed builtin call
-tBuiltinToPolarsWithConsts : List (String, ConstValue) -> TBuiltinCall inTy outTy -> String
+tBuiltinToPolarsWithConsts : List (String, ConstValue) -> TBuiltinCall i o -> String
 tBuiltinToPolarsWithConsts consts (TStripPrefix arg) =
   ".str.strip_prefix(\"" ++ resolveArg consts arg ++ "\")"
 tBuiltinToPolarsWithConsts consts (TStripSuffix arg) =
@@ -200,7 +200,7 @@ tBuiltinToPolarsWithConsts _ (TCast target) = ".cast(pl." ++ tyToPolars target +
     tyToPolars (TMaybe inner) = tyToPolars inner  -- Polars handles nullability separately
 
 -- Generate chained method calls from a typed builtin chain
-tChainToPolarsWithConsts : List (String, ConstValue) -> TBuiltinChain inTy outTy -> String -> String
+tChainToPolarsWithConsts : List (String, ConstValue) -> TBuiltinChain i o -> String -> String
 tChainToPolarsWithConsts consts TCNil colExpr = colExpr
 tChainToPolarsWithConsts consts (TCCons builtin rest) colExpr =
   tChainToPolarsWithConsts consts rest (colExpr ++ tBuiltinToPolarsWithConsts consts builtin)
