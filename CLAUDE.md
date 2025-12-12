@@ -1,6 +1,8 @@
 # Floe
 
-A dependently-typed compiler for a data pipeline DSL that generates Python/Polars code with compile-time schema safety guarantees.
+A dependently-typed compiler for a declarative data pipeline DSL that generates Python/Polars code with compile-time schema safety guarantees.
+
+Floe is a purely declarative language - there is no imperative control flow. Pipelines are defined as compositions of transforms, and the compiler generates efficient lazy Polars query plans that are executed together via `pl.collect_all()`.
 
 ## Quick Start
 
@@ -10,6 +12,9 @@ make build
 
 # Compile a .floe file to Python
 ./build/exec/floe examples/Basic.floe > out.py
+
+# Show the Polars query plan (without executing)
+./build/exec/floe --plan examples/Basic.floe | python
 
 # Run unit tests
 idris2 --build floe-test.ipkg
@@ -84,7 +89,7 @@ schema User {
 
 -- Operators:
 -- >> composes operations in pipeline definitions
--- |> pipes data through transformations in main
+-- |> pipes data through transformations in table expressions
 
 -- Pipeline bindings with type annotation
 let cleanUser : RawUser -> User =
@@ -93,11 +98,11 @@ let cleanUser : RawUser -> User =
     rename email_address email >>
     drop [is_active]
 
--- Entry point: main uses do notation
-main = do
-    data <- read "input.parquet" as RawUser
-    result <- data |> cleanUser
-    sink "output.parquet" result
+-- Table expressions: read data and apply transforms
+let result = read "input.parquet" as RawUser |> cleanUser
+
+-- Top-level sink: write output (can have multiple sinks)
+sink "output.parquet" result
 
 -- Typed constants
 let minPrice : Int64 = 100
@@ -154,45 +159,66 @@ All bindings use the unified syntax `let name : Type = value`:
 - **Constants**: `let minAge : Int = 18` - typed constants usable in expressions
 - **Pipelines**: `let transform : SchemaA -> SchemaB = ops...` - schema transformations
 - **Column functions**: `let fn : String -> String = builtins...` - scalar transformers
+- **Table bindings**: `let data = read "file" as Schema |> transform` - table expressions
 
-### Main Entry Point (Do Notation)
+### Declarative Data Flow
 
-The `main` function uses do notation to explicitly track data flow:
+Floe uses a declarative syntax where data flows through pipelines:
 
 ```haskell
-main = do
-    data <- read "input.parquet" as InputSchema
-    result <- data |> transform1 |> transform2
-    sink "output.parquet" result
+-- Read and transform data
+let result = read "input.parquet" as InputSchema |> transform1 |> transform2
+
+-- Write output (top-level sink statement)
+sink "output.parquet" result
 ```
 
-**Do notation statements:**
-- `var <- expr` - bind the result of an expression to a variable
-- `sink "file" expr` - write the result to a file
-
-**Main expressions:**
+**Table expressions:**
 - `read "file" as Schema` - read data from a Parquet file
-- `data |> transform` - pipe data through a transformation
-- `apply transform data` - apply a transformation (alternative syntax)
-- `var` - reference a previously bound variable
+- `expr |> transform` - pipe data through a transformation
+- `var` - reference a previously bound table
+
+**Sinks:**
+- `sink "file" expr` - top-level statement to write data to a file
+- Multiple sinks are supported and executed efficiently with `pl.collect_all()`
 
 **Examples:**
 
-Using `|>` for chaining:
 ```haskell
-main = do
-    data <- read "input.parquet" as Sales
-    cleaned <- data |> cleanData |> filterActive
-    sink "output.parquet" cleaned
+-- Simple pipeline
+let cleaned = read "input.parquet" as Sales |> cleanData |> filterActive
+sink "output.parquet" cleaned
 ```
 
-Using `apply` for step-by-step transformations:
 ```haskell
-main = do
-    data <- read "input.parquet" as Sales
-    cleaned <- apply cleanData data
-    filtered <- apply filterActive cleaned
-    sink "output.parquet" filtered
+-- Multiple outputs from same data
+let processed = read "orders.parquet" as Order |> validate |> enrich
+
+sink "orders_clean.parquet" processed
+sink "orders_backup.parquet" processed
+```
+
+### Generated Code
+
+Floe generates lazy Polars code. All sinks are collected efficiently in a single pass:
+
+```python
+import polars as pl
+
+def validate(df): ...
+def enrich(df): ...
+
+processed = pl.scan_parquet("orders.parquet").pipe(validate).pipe(enrich)
+
+_q0 = processed.sink_parquet("orders_clean.parquet", lazy=True)
+_q1 = processed.sink_parquet("orders_backup.parquet", lazy=True)
+pl.collect_all([_q0, _q1])
+```
+
+Use `--plan` to inspect the query plan without executing:
+
+```bash
+floe --plan pipeline.floe | python
 ```
 
 ### Operations
@@ -272,9 +298,10 @@ Integer and float literals default to `Int64` and `Float64` respectively.
 - **Integer literals coerce to the column type** - `.amount * 2` works for any numeric type
 - **Precision tracking is advisory** - we compute a result type internally but Polars determines the actual runtime type
 
-The validation happens at two levels:
-- **Compile time**: Rejects Decimal/Float mixing, validates column existence
-- **Runtime**: Generated code validates input schema matches declared types exactly (including precision/scale)
+The validation happens at compile time:
+- Rejects Decimal/Float mixing
+- Validates column existence and type compatibility
+- Ensures pipeline compositions are schema-correct
 
 ## The Proof Mechanism
 

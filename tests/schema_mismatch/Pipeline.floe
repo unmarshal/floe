@@ -16,7 +16,6 @@ let passthrough : Expected -> Output =
         amount: .amount
     }
 
-main = do
-    data <- read "input.parquet" as Expected
-    result <- data |> passthrough
-    sink "output.parquet" result
+let result = read "input.parquet" as Expected |> passthrough
+
+sink "output.parquet" result

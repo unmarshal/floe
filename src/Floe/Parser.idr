@@ -1020,7 +1020,7 @@ pFnDef sp name st = do
   Right (MkSFnDef sp name chain, st)
 
 -----------------------------------------------------------
--- Main Body Parser (do notation)
+-- Table Expression Parser (for declarative read/pipe)
 -----------------------------------------------------------
 
 -- Helper to parse file argument (string literal or param identifier)
@@ -1031,6 +1031,44 @@ pFileArg st =
     TStrLit s => Right (s, advanceP st)
     TIdent name => Right (name, advanceP st)
     _ => Left (ParseError tok.span ("Expected string or parameter name, got " ++ show tok.tok))
+
+-- Parse a base table expression: read "file" as Schema or variable reference
+pTableExprBase : Parser STableExpr
+pTableExprBase st =
+  let tok = currentTok st
+  in case tok.tok of
+    TRead => do
+      -- read "file" as Schema
+      let st' = advanceP st  -- skip 'read'
+      (file, st'') <- pFileArg st'
+      ((), st''') <- expect TAs st''
+      (schema, st'''') <- pIdent st'''
+      Right (STRead tok.span file schema, st'''')
+    TIdent name => do
+      -- Variable reference
+      Right (STVar tok.span name, advanceP st)
+    _ => Left (ParseError tok.span ("Expected 'read' or variable, got " ++ show tok.tok))
+
+-- Parse table expression with optional |> chains
+pTableExpr : Parser STableExpr
+pTableExpr st = do
+  (expr, st') <- pTableExprBase st
+  pTableExprPipes expr st'
+  where
+    pTableExprPipes : STableExpr -> Parser STableExpr
+    pTableExprPipes expr st =
+      if isToken TPipeForward st
+        then do
+          let sp = (currentTok st).span
+          let st' = advanceP st  -- skip '|>'
+          (fnName, st'') <- pIdent st'
+          pTableExprPipes (STPipe sp expr fnName) st''
+        else
+          Right (expr, st)
+
+-----------------------------------------------------------
+-- Main Body Parser (do notation) - Legacy, to be removed
+-----------------------------------------------------------
 
 -- Parse a main expression: read, apply, |>, or variable reference
 pMainExpr : Parser SMainExpr
@@ -1232,9 +1270,15 @@ pTopLevel st =
     TSchema => do
       (s, st') <- pSchema st
       Right (STLSchema s, st')
+    TSink => do
+      -- Top-level sink: sink "file" tableExpr
+      let st' = advanceP st  -- skip 'sink'
+      (file, st'') <- pFileArg st'
+      (expr, st''') <- pTableExpr st''
+      Right (STLSink tok.span file expr, st''')
     TLet => do
       -- New unified syntax: let name : Type = value
-      -- Or table binding: let name = read "file" as Schema
+      -- Or table binding: let name = read "file" as Schema [|> transform]
       let st' = advanceP st  -- skip 'let'
       case pIdent st' of
         Left e => Left e
@@ -1248,20 +1292,12 @@ pTopLevel st =
               (bindVal, st'''''') <- pBindingValue bindTy st'''''
               Right (STLBinding (MkSBinding tok.span name bindTy bindVal), st'''''')
             else do
-              -- Legacy or table binding: let name = ...
+              -- Table expression binding: let name = read "file" as Schema [|> transform ...]
               ((), st''') <- expect TEquals st''
-              let nextTok = currentTok st'''
-              case nextTok.tok of
-                TRead => do
-                  -- Table binding: let name = read "file" as Schema
-                  let st'''' = advanceP st'''  -- skip 'read'
-                  (file, st''''') <- pStrOrIdent st''''
-                  ((), st'''''') <- expect TAs st'''''
-                  (schemaName, st''''''') <- pIdent st''''''
-                  Right (STLTableBind (MkSTableBind tok.span name file schemaName), st''''''')
-                _ => Left (ParseError nextTok.span ("Expected ':' for type annotation or 'read' for table binding"))
+              (tableExpr, st'''') <- pTableExpr st'''
+              Right (STLTableBind (MkSTableBind tok.span name tableExpr), st'''')
     TIdent "main" => do
-      -- main [params] = do { stmts }
+      -- main [params] = do { stmts } (legacy, to be removed)
       let st' = advanceP st  -- skip 'main'
       (params, st'') <- pMainParams st'
       ((), st''') <- expect TEquals st''
@@ -1271,7 +1307,7 @@ pTopLevel st =
     TIdent "transform" => do
       (t, st') <- pLegacyTransform st
       Right (STLTransform t, st')
-    _ => Left (ParseError tok.span ("Expected 'schema', 'let', 'main', or 'transform', got " ++ show tok.tok))
+    _ => Left (ParseError tok.span ("Expected 'schema', 'let', 'sink', 'main', or 'transform', got " ++ show tok.tok))
 
 -----------------------------------------------------------
 -- Program Parser

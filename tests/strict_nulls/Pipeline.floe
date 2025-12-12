@@ -12,7 +12,6 @@ schema Output {
 
 let transform : Input -> Output = select [name, age]
 
-main = do
-    data <- read "input.parquet" as Input
-    result <- data |> transform
-    sink "output.parquet" result
+let result = read "input.parquet" as Input |> transform
+
+sink "output.parquet" result

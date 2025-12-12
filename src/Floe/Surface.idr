@@ -366,6 +366,33 @@ constValueTy (ConstInt _) = TInt64
 constValueTy (ConstFloat _) = TFloat64
 constValueTy (ConstBool _) = TBool
 
+-----------------------------------------------------------
+-- Table Expressions (for declarative read/pipe/sink)
+-----------------------------------------------------------
+
+-- A table expression produces a table value
+public export
+data STableExpr
+  = STRead Span String String          -- read "file" as Schema
+  | STPipe Span STableExpr String      -- tableExpr |> transform
+  | STVar Span String                  -- variable reference
+
+public export
+Show STableExpr where
+  show (STRead _ file schema) = "read \"" ++ file ++ "\" as " ++ schema
+  show (STPipe _ expr transform) = show expr ++ " |> " ++ transform
+  show (STVar _ name) = name
+
+public export
+tableExprSpan : STableExpr -> Span
+tableExprSpan (STRead s _ _) = s
+tableExprSpan (STPipe s _ _) = s
+tableExprSpan (STVar s _) = s
+
+-----------------------------------------------------------
+-- Bindings
+-----------------------------------------------------------
+
 -- Binding type annotation
 public export
 data SBindingTy
@@ -385,12 +412,14 @@ data SBindingVal
   = SBValConst ConstValue            -- literal value: 18, "hello", True
   | SBValPipeline SPipeline          -- pipeline: rename x y >> drop [z]
   | SBValColFn (List BuiltinCall)    -- column function: stripPrefix "oa:" >> toLowercase
+  | SBValTable STableExpr            -- table expression: read "file" as Schema |> transform
 
 public export covering
 Show SBindingVal where
   show (SBValConst v) = show v
   show (SBValPipeline p) = show p
   show (SBValColFn chain) = "colFn[" ++ show (length chain) ++ "]"
+  show (SBValTable t) = show t
 
 -- Unified let binding: let name : type = value
 public export
@@ -426,6 +455,10 @@ record SFnDef where
   name : String
   chain : List BuiltinCall
 
+-----------------------------------------------------------
+-- Legacy Main (to be removed)
+-----------------------------------------------------------
+
 -- Expression in main (things that produce values)
 public export
 data SMainExpr
@@ -457,21 +490,21 @@ record STransformDef where
   outputSchema : String  -- name of output schema
   ops : List SOp
 
--- Global table binding: let name = read "file" as Schema
+-- Global table binding: let name = tableExpr
 public export
 record STableBind where
   constructor MkSTableBind
   span : Span
   name : String       -- table binding name
-  file : String       -- file path or param
-  schema : String     -- schema name
+  expr : STableExpr   -- the table expression (read, pipes, etc.)
 
 public export
 data STopLevel
   = STLSchema SSchema
   | STLBinding SBinding          -- let name : type = value (unified binding)
   | STLTableBind STableBind      -- let name = read "file" as Schema
-  | STLMain SMain                -- main [params] = body
+  | STLSink Span String STableExpr  -- sink "file" tableExpr (top-level sink)
+  | STLMain SMain                -- main [params] = body (legacy, to be removed)
   | STLTransform STransformDef   -- legacy transform block
   -- Legacy constructors (to be removed after migration)
   | STLTypeSig STypeSig
@@ -596,6 +629,16 @@ getTableBinds prog = go prog.items
     go : List STopLevel -> List STableBind
     go [] = []
     go (STLTableBind t :: rest) = t :: go rest
+    go (_ :: rest) = go rest
+
+-- Helper to extract top-level sinks
+public export
+getSinks : SProgram -> List (Span, String, STableExpr)
+getSinks prog = go prog.items
+  where
+    go : List STopLevel -> List (Span, String, STableExpr)
+    go [] = []
+    go (STLSink sp file expr :: rest) = (sp, file, expr) :: go rest
     go (_ :: rest) = go rest
 
 -----------------------------------------------------------

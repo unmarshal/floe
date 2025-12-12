@@ -96,12 +96,31 @@ buildGeneratedFnFromBinding ctx b =
       pure (Just (MkGeneratedFn b.name sIn inName outName (sIn ** sOut ** p)))
     _ => Right Nothing  -- Not a pipeline binding
 
--- Build table bindings (with error reporting)
+-- Extract schema name from table expression
+getTableExprSchemaName : STableExpr -> Maybe String
+getTableExprSchemaName (STRead _ _ schema) = Just schema
+getTableExprSchemaName (STPipe _ inner _) = getTableExprSchemaName inner
+getTableExprSchemaName (STVar _ _) = Nothing
+
+-- Extract file from table expression
+getTableExprFileName : STableExpr -> String
+getTableExprFileName (STRead _ file _) = file
+getTableExprFileName (STPipe _ inner _) = getTableExprFileName inner
+getTableExprFileName (STVar _ _) = ""
+
+-- Build table bindings (with error reporting) - legacy for joins
 buildTableBinding : Context -> STableBind -> Either FloeError TableBinding
 buildTableBinding ctx tb = do
-  schema <- note (ParseError tb.span ("Schema '" ++ tb.schema ++ "' is not defined"))
-                 (lookupSchema tb.schema ctx)
-  pure (MkTableBinding tb.name tb.file schema)
+  case getTableExprSchemaName tb.expr of
+    Nothing => Left (ParseError tb.span "Table binding must have a read with schema")
+    Just schemaName => do
+      schema <- note (ParseError tb.span ("Schema '" ++ schemaName ++ "' is not defined"))
+                     (lookupSchema schemaName ctx)
+      pure (MkTableBinding tb.name (getTableExprFileName tb.expr) schema)
+
+-- Build table expression binding (new style - preserves full expression)
+buildTableExprBinding : STableBind -> TableExprBinding
+buildTableExprBinding tb = MkTableExprBinding tb.name tb.expr
 
 -- Extract column function definitions from new-style bindings
 -- Converts SBinding with SBTyColFn to SFnDef for codegen
@@ -111,6 +130,11 @@ extractColFnDefs (b :: rest) =
   case (b.ty, b.val) of
     (SBTyColFn _ _, SBValColFn chain) => MkSFnDef b.span b.name chain :: extractColFnDefs rest
     _ => extractColFnDefs rest
+
+-- Build sink definitions from top-level sinks
+buildSinks : List (Span, String, STableExpr) -> List SinkDef
+buildSinks [] = []
+buildSinks ((_, file, expr) :: rest) = MkSinkDef file expr :: buildSinks rest
 
 -- Build the complete GeneratedProgram
 buildProgram : CompileOptions -> Context -> SProgram -> Either FloeError GeneratedProgram
@@ -122,18 +146,23 @@ buildProgram opts ctx prog = do
   let fnDefs = legacyFnDefs ++ newFnDefs
   let typeSigs = getTypeSigs prog
   tables <- sequenceEither (map (buildTableBinding ctx) (getTableBinds prog))
+  -- Build table expression bindings (new style, for declarative sinks)
+  let tableExprs = map buildTableExprBinding (getTableBinds prog)
   -- Build functions from legacy let bindings
   legacyFunctions <- sequenceEither (map (buildGeneratedFn ctx typeSigs) (getLetBinds prog))
   -- Build functions from new-style bindings
   newFunctionsMaybe <- sequenceEither (map (buildGeneratedFnFromBinding ctx) (getBindings prog))
   let newFunctions = catMaybes newFunctionsMaybe
   let functions = legacyFunctions ++ newFunctions
+  -- Build top-level sinks
+  let sinks = buildSinks (getSinks prog)
+  -- Legacy main support
   (params, steps) <- case getMain prog of
     Nothing => pure ([], [])
     Just m => do
       steps <- compileMainStmts ctx [] m.body  -- Start with empty variable environment
       pure (m.params, steps)
-  pure (MkGeneratedProgram opts consts fnDefs tables functions params steps)
+  pure (MkGeneratedProgram opts consts fnDefs tables tableExprs functions sinks params steps)
 
 -----------------------------------------------------------
 -- Compile a .floe file
@@ -172,7 +201,9 @@ parseArgs args = go defaultOptions (drop 1 args)  -- drop program name
     go : CompileOptions -> List String -> Either String (CompileOptions, String)
     go opts [] = Left "No input file specified"
     go opts ["--lenient"] = Left "No input file specified"
+    go opts ["--plan"] = Left "No input file specified"
     go opts ("--lenient" :: rest) = go ({ lenient := True } opts) rest
+    go opts ("--plan" :: rest) = go ({ showPlan := True } opts) rest
     go opts [filename] = Right (opts, filename)
     go opts (arg :: _) = Left ("Unexpected argument: " ++ arg)
 
@@ -183,8 +214,9 @@ main = do
     Right (opts, filename) => compileFile opts filename
     Left err => do
       putStrLn $ "Error: " ++ err
-      putStrLn "Usage: floe [--lenient] <file.floe>"
+      putStrLn "Usage: floe [OPTIONS] <file.floe>"
       putStrLn ""
       putStrLn "Options:"
       putStrLn "  --lenient    Skip strict null checking for non-Maybe columns"
+      putStrLn "  --plan       Output query plan instead of executing sinks"
       exitWith (ExitFailure 1)

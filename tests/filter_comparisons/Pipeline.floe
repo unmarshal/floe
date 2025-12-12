@@ -16,7 +16,6 @@ let filterAffordable : Product -> AffordableProduct =
     filter .price < 100
     >> filter .in_stock
 
-main = do
-    data <- read "products.parquet" as Product
-    result <- data |> filterAffordable
-    sink "output.parquet" result
+let result = read "products.parquet" as Product |> filterAffordable
+
+sink "output.parquet" result

@@ -15,7 +15,6 @@ let fillPrice : Maybe Float64 -> Float64 = fillNull 0.0
 let transform : Input -> Output =
     transform [price] fillPrice
 
-main = do
-    data <- read "input.parquet" as Input
-    result <- data |> transform
-    sink "output.parquet" result
+let result = read "input.parquet" as Input |> transform
+
+sink "output.parquet" result

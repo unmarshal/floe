@@ -920,13 +920,30 @@ elabConstants : Context -> List (String, ConstValue) -> Context
 elabConstants ctx [] = ctx
 elabConstants ctx ((nm, val) :: rest) = elabConstants (addConstant nm val ctx) rest
 
+-- Extract the base schema name from a table expression (from the innermost read)
+getTableExprSchema : STableExpr -> Maybe String
+getTableExprSchema (STRead _ _ schema) = Just schema
+getTableExprSchema (STPipe _ inner _) = getTableExprSchema inner
+getTableExprSchema (STVar _ _) = Nothing  -- variable reference, resolve later
+
+-- Extract the file from a table expression (from the innermost read)
+getTableExprFile : STableExpr -> String
+getTableExprFile (STRead _ file _) = file
+getTableExprFile (STPipe _ inner _) = getTableExprFile inner
+getTableExprFile (STVar _ _) = ""  -- variable reference
+
 elabTableBinds : Context -> List STableBind -> Result Context
 elabTableBinds ctx [] = ok ctx
 elabTableBinds ctx (t :: rest) = do
-  -- Look up the schema for this table
-  case lookupSchema t.schema ctx of
-    Nothing => err (SchemaNotFound t.span t.schema)
-    Just schema => elabTableBinds (addTable t.name t.file schema ctx) rest
+  -- Extract the schema from the table expression
+  case getTableExprSchema t.expr of
+    Nothing =>
+      -- Variable reference - for now just skip validation (will be checked at use site)
+      elabTableBinds ctx rest
+    Just schemaName =>
+      case lookupSchema schemaName ctx of
+        Nothing => err (SchemaNotFound t.span schemaName)
+        Just schema => elabTableBinds (addTable t.name (getTableExprFile t.expr) schema ctx) rest
 
 validateTransforms : Context -> List STransformDef -> Result ()
 validateTransforms ctx [] = ok ()

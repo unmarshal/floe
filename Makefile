@@ -10,5 +10,5 @@ test: build
 
 clean:
 	rm -rf build/
-	rm -f tests/*/generated.py tests/*/*.parquet
+	rm -f tests/*/generated.py tests/*/plan.py tests/*/plan_output.txt tests/*/*.parquet
 	rm -rf tests/*/__pycache__

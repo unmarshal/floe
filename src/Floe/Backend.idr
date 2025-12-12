@@ -14,10 +14,11 @@ public export
 record CompileOptions where
   constructor MkCompileOptions
   lenient : Bool  -- Skip strict null checking
+  showPlan : Bool -- Output query plan instead of executing
 
 public export
 defaultOptions : CompileOptions
-defaultOptions = MkCompileOptions False
+defaultOptions = MkCompileOptions False False
 
 -----------------------------------------------------------
 -- Abstract Program Representation
@@ -33,7 +34,7 @@ record GeneratedFn where
   outputSchemaName : String
   pipeline : (sIn : Schema ** sOut : Schema ** Pipeline sIn sOut)
 
--- A table binding (global read)
+-- A table binding (global read) - legacy for joins
 public export
 record TableBinding where
   constructor MkTableBinding
@@ -41,12 +42,26 @@ record TableBinding where
   file : String
   schema : Schema
 
--- Entry point step
+-- A table expression binding (new style: let x = read ... |> transform)
+public export
+record TableExprBinding where
+  constructor MkTableExprBinding
+  name : String
+  expr : STableExpr
+
+-- Entry point step (legacy, for main-based programs)
 public export
 data EntryStep
   = ERead String String Schema   -- file, schemaName, schema
   | EPipe String                 -- function name
   | EWrite String                -- file
+
+-- A sink definition (top-level sink statement)
+public export
+record SinkDef where
+  constructor MkSinkDef
+  file : String                  -- output file path
+  tableExpr : STableExpr         -- the table expression to sink
 
 -- Complete program representation
 public export
@@ -55,10 +70,12 @@ record GeneratedProgram where
   options : CompileOptions
   consts : List (String, ConstValue)   -- constant definitions
   fnDefs : List SFnDef                 -- scalar function definitions
-  tables : List TableBinding           -- global table bindings
+  tables : List TableBinding           -- global table bindings (legacy, for joins)
+  tableExprs : List TableExprBinding   -- table expression bindings (new style)
   functions : List GeneratedFn         -- transform functions
-  entryParams : List String            -- CLI parameters
-  entrySteps : List EntryStep          -- main body steps
+  sinks : List SinkDef                 -- top-level sink statements
+  entryParams : List String            -- CLI parameters (legacy)
+  entrySteps : List EntryStep          -- main body steps (legacy)
 
 -----------------------------------------------------------
 -- Backend Interface

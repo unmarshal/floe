@@ -148,26 +148,99 @@ generateEntry params steps strict =
 -- Table Binding Generation
 -----------------------------------------------------------
 
+-- Generate a table binding from STableBind
+-- Uses lazy scan for compatibility with sinks
+generateTableBindingExpr : STableExpr -> String
+generateTableBindingExpr (STRead _ file schema) =
+  "pl.scan_parquet(\"" ++ file ++ "\")"
+generateTableBindingExpr (STPipe _ inner fnName) =
+  generateTableBindingExpr inner ++ ".pipe(" ++ fnName ++ ")"
+generateTableBindingExpr (STVar _ name) = name
+
+-- For table bindings that use STableExpr (new style)
+generateTableBindFromExpr : String -> STableExpr -> String
+generateTableBindFromExpr name expr =
+  name ++ " = " ++ generateTableBindingExpr expr
+
+-- For legacy table bindings (simple reads for joins), use eager read
 generateTableBinding : TableBinding -> String
 generateTableBinding tb =
   tb.name ++ " = pl.read_parquet(\"" ++ tb.file ++ "\")"
 
 -----------------------------------------------------------
+-- Table Expression Generation (for declarative sinks)
+-----------------------------------------------------------
+
+-- Generate Python code for a table expression
+generateTableExpr : STableExpr -> String
+generateTableExpr (STRead _ file schema) =
+  "pl.scan_parquet(\"" ++ file ++ "\")"
+generateTableExpr (STPipe _ inner fnName) =
+  generateTableExpr inner ++ ".pipe(" ++ fnName ++ ")"
+generateTableExpr (STVar _ name) = name
+
+-- Generate a lazy sink query
+generateLazySink : Nat -> SinkDef -> String
+generateLazySink idx sink =
+  let queryName = "_q" ++ show idx
+      tableExpr = generateTableExpr sink.tableExpr
+  in queryName ++ " = " ++ tableExpr ++ ".sink_parquet(\"" ++ sink.file ++ "\", lazy=True)"
+
+-- Generate all sinks with collect_all (or explain for --plan mode)
+generateSinks : Bool -> List SinkDef -> List String
+generateSinks _ [] = []
+generateSinks showPlan sinks =
+  let n = length sinks
+      indices : List Nat
+      indices = take n [0..]
+      queryNames = map (\i => "_q" ++ show i) indices
+  in if showPlan
+     then -- Plan mode: just show the query plan, don't execute
+       let planLines = zipWith (\i, sink =>
+             let queryName = "_q" ++ show i
+                 tableExpr = generateTableExpr sink.tableExpr
+             in queryName ++ " = " ++ tableExpr) indices sinks
+           explainLines = map (\q => "print(\"=== Query Plan for " ++ q ++ " ===\")\nprint(" ++ q ++ ".explain())") queryNames
+       in planLines ++ [""] ++ explainLines
+     else -- Normal mode: execute sinks
+       let sinkLines = zipWith generateLazySink indices sinks
+           collectLine = "pl.collect_all([" ++ joinWith ", " queryNames ++ "])"
+       in sinkLines ++ [collectLine]
+
+-----------------------------------------------------------
 -- Full Program Rendering
 -----------------------------------------------------------
+
+-- Generate table expression bindings (new style, uses lazy scan)
+generateTableExprBinding : TableExprBinding -> String
+generateTableExprBinding tb = generateTableBindFromExpr tb.name tb.expr
 
 export covering
 renderPolarsPython : GeneratedProgram -> String
 renderPolarsPython prog =
   let header = preamble
       consts = generateConsts prog.consts
-      tables = map generateTableBinding prog.tables
-      tableSection = if null tables then [] else tables ++ [""]
+      -- Legacy table bindings (eager, for joins) - only used when no sinks
+      legacyTables = map generateTableBinding prog.tables
+      legacyTableSection = if null prog.sinks && not (null legacyTables)
+                           then legacyTables ++ [""]
+                           else []
+      -- Functions must come before new-style table bindings (which may reference them)
       fns = concatMap (generateFn prog.consts prog.fnDefs) prog.functions
+      -- New-style table expression bindings (lazy, for sinks) - come after functions
+      newTables = map generateTableExprBinding prog.tableExprs
+      newTableSection = if not (null prog.sinks) && not (null newTables)
+                        then newTables ++ [""]
+                        else []
+      -- New declarative sinks (preferred)
+      sinkSection = if null prog.sinks
+                    then []
+                    else generateSinks prog.options.showPlan prog.sinks
+      -- Legacy main-based entry (for backwards compatibility)
       entry = if null prog.entrySteps
               then []
               else generateEntry prog.entryParams prog.entrySteps (not prog.options.lenient)
-  in lines (header ++ consts ++ tableSection ++ fns ++ entry)
+  in lines (header ++ consts ++ legacyTableSection ++ fns ++ newTableSection ++ sinkSection ++ entry)
 
 -----------------------------------------------------------
 -- Backend Instance

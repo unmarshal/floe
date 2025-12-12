@@ -1,6 +1,6 @@
 # Floe
 
-A dependently-typed compiler for data pipeline DSLs with compile-time schema safety.
+A dependently-typed compiler for a declarative data pipeline DSL with compile-time schema safety.
 
 ## The Problem
 
@@ -8,54 +8,76 @@ Data pipelines fail at runtime with schema mismatches, missing columns, and type
 
 ## The Solution
 
-Floe uses dependent types (in Idris 2) to make invalid pipelines unrepresentable. If your pipeline compiles, every column reference is valid, every type matches, and the output schema is exactly what you declared.
+Floe is a purely declarative language that uses dependent types to make invalid pipelines unrepresentable. If your pipeline compiles, every column reference is valid, every type matches, and the output schema is exactly what you declared.
 
 ```haskell
-schema RawUser {
-    user_id: String,
-    full_name: String,
-    email_address: String,
-    is_active: Bool,
+schema Order {
+    order_id: String,
+    customer_id: String,
+    amount: Decimal(10, 2),
+    status: String,
 }
 
-schema User {
+schema Customer {
     id: String,
     name: String,
-    email: String,
 }
 
-let cleanUser : RawUser -> User =
-    rename user_id id >>
-    rename full_name name >>
-    rename email_address email >>
-    drop [is_active]
+schema EnrichedOrder {
+    order_id: String,
+    customer_name: String,
+    amount: Decimal(10, 2),
+}
+
+-- Table for joins
+let customers = read "customers.parquet" as Customer
+
+-- Pipeline: filter, join, and reshape
+let enrichOrders : Order -> EnrichedOrder =
+    filter .status == "completed" >>
+    join customers on .customer_id == .id >>
+    map {
+        order_id: .order_id,
+        customer_name: .name,
+        amount: .amount,
+    }
+
+-- Read data, apply transforms, write output
+let result = read "orders.parquet" as Order |> enrichOrders
+
+sink "enriched_orders.parquet" result
 ```
 
 The compiler proves:
-- `user_id` exists in `RawUser` (and is a String)
-- After rename, `id` exists (and `user_id` doesn't)
-- The final schema exactly matches `User`
+- `status` exists in `Order` for filtering
+- `customer_id` and `id` exist and have matching types for the join
+- After join, both `name` (from Customer) and `order_id` (from Order) are available
+- The final schema exactly matches `EnrichedOrder`
 
 If you make a mistake, the compiler catches it:
 
 ```haskell
-let cleanUser : RawUser -> User =
-    rename user_id id >>
-    drop [user_id]  -- ERROR: user_id no longer exists!
+let enrichOrders : Order -> EnrichedOrder =
+    filter .status == "completed" >>
+    join customers on .user_id == .id  -- ERROR: user_id doesn't exist!
 ```
 
-```haskell
-line 3, col 5: One or more columns not found for drop
+```
+line 3, col 27: Column 'user_id' not found in schema
 ```
 
 ## Quick Start
 
 ```bash
 # Build
-idris2 --build floe.ipkg
+make build
 
 # Compile a .floe file to Python/Polars
-./build/exec/floe examples/Basic.floe > pipeline.py
+./build/exec/floe pipeline.floe > pipeline.py
+python pipeline.py
+
+# Show the query plan without executing
+./build/exec/floe --plan pipeline.floe | python
 
 # Run tests
 make test
@@ -100,24 +122,6 @@ Decimals with different precision/scale can be mixed in arithmetic - Polars hand
 
 **Note:** Floe rejects mixing Decimal and Float types in arithmetic at compile time to prevent accidental precision loss in financial calculations. If you need to mix types, you must explicitly cast first (e.g., `.amount as Float64 * .rate` or `.amount * .rate as Decimal(10, 2)`).
 
-## Runtime Schema Validation
-
-Floe generates runtime validation to ensure input data matches declared schemas:
-
-```python
-df = pl.read_parquet("input.parquet")
-_expected_schema = {"amount": pl.Decimal(precision=10, scale=2), ...}
-for _col, _dtype in _expected_schema.items():
-    if df.schema[_col] != _dtype:
-        raise TypeError(f"Column '{_col}': expected {_dtype}, got {df.schema[_col]}")
-```
-
-This provides **two layers of type safety**:
-- **Compile time**: Proves pipeline transformations are internally consistent
-- **Runtime**: Validates external data matches declared schema
-
-If a parquet file has `Decimal(38, 2)` but you declared `Decimal(10, 2)`, you get a clear error immediately rather than silent data corruption.
-
 ## Operators
 
 Floe uses two composition operators with distinct purposes:
@@ -130,35 +134,60 @@ let cleanUser : RawUser -> User =
     filter .active
 ```
 
-**`|>` (pipe)** - Applies data through a pipeline in `main`:
+**`|>` (pipe)** - Applies data through transforms in table expressions:
 ```haskell
-main =
-    read "users.parquet" as RawUser
-    |> cleanUser
-    |> someOtherTransform
-    sink "output.parquet"
+let result = read "users.parquet" as RawUser |> cleanUser |> enrichUser
+
+sink "output.parquet" result
 ```
 
-Think of `>>` as defining transformations (functions) and `|>` as applying data to those transformations (function application).
+Think of `>>` as defining transformations and `|>` as applying data through them.
+
+## Multiple Outputs
+
+Floe supports multiple sinks, executed efficiently in a single pass:
+
+```haskell
+let orders = read "orders.parquet" as Order |> validate |> enrich
+
+sink "orders_clean.parquet" orders
+sink "orders_backup.parquet" orders
+sink "orders_summary.parquet" orders |> summarize
+```
+
+The generated code uses Polars lazy evaluation:
+
+```python
+orders = pl.scan_parquet("orders.parquet").pipe(validate).pipe(enrich)
+
+_q0 = orders.sink_parquet("orders_clean.parquet", lazy=True)
+_q1 = orders.sink_parquet("orders_backup.parquet", lazy=True)
+_q2 = orders.pipe(summarize).sink_parquet("orders_summary.parquet", lazy=True)
+pl.collect_all([_q0, _q1, _q2])
+```
 
 ## Bindings
 
-All bindings require explicit type annotations using the syntax `let name : Type = value`:
-
 ```haskell
--- Pipeline: transforms one schema to another
+-- Pipeline: transforms one schema to another (type annotation required)
 let cleanUser : RawUser -> User =
     rename user_id id >>
     drop [is_active]
+
+-- Table binding: read and transform data (no annotation needed)
+let users = read "users.parquet" as RawUser |> cleanUser
 
 -- Constant: typed value usable in expressions
 let minAge : Int64 = 18
 
 -- Column function: scalar transformer using builtins
 let normalize : String -> String = trim >> toLowercase
+
+-- Top-level sink: write output
+sink "output.parquet" users
 ```
 
-The type annotation is mandatory - Floe does not infer types for top-level bindings.
+Type annotations are required for pipelines and column functions (for immediate validation). Table bindings infer their schema from the `read ... as Schema` clause.
 
 ## Operations
 

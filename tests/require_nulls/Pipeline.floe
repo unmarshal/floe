@@ -20,7 +20,6 @@ let filterComplete : UserInput -> UserComplete =
         age: .age
     }
 
-main = do
-    data <- read "input.parquet" as UserInput
-    result <- data |> filterComplete
-    sink "output.parquet" result
+let result = read "input.parquet" as UserInput |> filterComplete
+
+sink "output.parquet" result

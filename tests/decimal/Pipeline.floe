@@ -25,7 +25,6 @@ let calculateTax : Invoice -> InvoiceWithTax =
         doubled: .amount * 2
     }
 
-main = do
-    data <- read "input.parquet" as Invoice
-    result <- data |> calculateTax
-    sink "output.parquet" result
+let result = read "input.parquet" as Invoice |> calculateTax
+
+sink "output.parquet" result

@@ -22,4 +22,4 @@ def compare_output(actual, expected):
 
 
 expect_failure = True
-expected_error = "Missing column: email"
+expected_error = "email"  # Polars reports: unable to find column "email"

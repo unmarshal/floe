@@ -87,6 +87,26 @@ def run_test(test_dir: Path) -> tuple[bool, str]:
     # Write the generated code
     generated_file.write_text(result.stdout)
 
+    # Step 1b: Generate plan version and run it to capture plan output
+    plan_result = subprocess.run(
+        [str(floe_bin), "--plan", str(pipeline_file)],
+        capture_output=True,
+        text=True,
+    )
+    if plan_result.returncode == 0:
+        plan_file = test_dir / "plan.py"
+        plan_file.write_text(plan_result.stdout)
+        # Run the plan to get actual Polars query plan output
+        plan_run = subprocess.run(
+            [sys.executable, str(plan_file)],
+            capture_output=True,
+            text=True,
+            cwd=test_dir,
+        )
+        if plan_run.returncode == 0:
+            plan_output_file = test_dir / "plan_output.txt"
+            plan_output_file.write_text(plan_run.stdout)
+
     # Step 2: Run the generated Python code
     result = subprocess.run(
         [sys.executable, str(generated_file)],
