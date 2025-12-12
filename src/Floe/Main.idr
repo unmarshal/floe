@@ -119,8 +119,14 @@ buildTableBinding ctx tb = do
       pure (MkTableBinding tb.name (getTableExprFileName tb.expr) schema)
 
 -- Build table expression binding (new style - preserves full expression)
-buildTableExprBinding : STableBind -> TableExprBinding
-buildTableExprBinding tb = MkTableExprBinding tb.name tb.expr
+buildTableExprBinding : Context -> STableBind -> Either FloeError TableExprBinding
+buildTableExprBinding ctx tb = do
+  case getTableExprSchemaName tb.expr of
+    Nothing => Left (ParseError tb.span "Table binding must have a read with schema")
+    Just schemaName => do
+      schema <- note (ParseError tb.span ("Schema '" ++ schemaName ++ "' is not defined"))
+                     (lookupSchema schemaName ctx)
+      pure (MkTableExprBinding tb.name tb.expr (getTableExprFileName tb.expr) schema)
 
 -- Extract column function definitions from new-style bindings
 -- Converts SBinding with SBTyColFn to SFnDef for codegen
@@ -147,7 +153,7 @@ buildProgram opts ctx prog = do
   let typeSigs = getTypeSigs prog
   tables <- sequenceEither (map (buildTableBinding ctx) (getTableBinds prog))
   -- Build table expression bindings (new style, for declarative sinks)
-  let tableExprs = map buildTableExprBinding (getTableBinds prog)
+  tableExprs <- sequenceEither (map (buildTableExprBinding ctx) (getTableBinds prog))
   -- Build functions from legacy let bindings
   legacyFunctions <- sequenceEither (map (buildGeneratedFn ctx typeSigs) (getLetBinds prog))
   -- Build functions from new-style bindings

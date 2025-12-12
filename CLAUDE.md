@@ -298,10 +298,9 @@ Integer and float literals default to `Int64` and `Float64` respectively.
 - **Integer literals coerce to the column type** - `.amount * 2` works for any numeric type
 - **Precision tracking is advisory** - we compute a result type internally but Polars determines the actual runtime type
 
-The validation happens at compile time:
-- Rejects Decimal/Float mixing
-- Validates column existence and type compatibility
-- Ensures pipeline compositions are schema-correct
+Validation happens at two levels:
+- **Compile time**: Rejects Decimal/Float mixing, validates column existence and type compatibility, ensures pipeline compositions are schema-correct
+- **Runtime**: Generated code validates input parquet schemas match declared types exactly (including precision/scale for Decimal), and checks non-nullable columns have no nulls
 
 ## The Proof Mechanism
 

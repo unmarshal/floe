@@ -48,6 +48,8 @@ record TableExprBinding where
   constructor MkTableExprBinding
   name : String
   expr : STableExpr
+  file : String      -- source file for validation
+  schema : Schema    -- expected schema for validation
 
 -- Entry point step (legacy, for main-based programs)
 public export

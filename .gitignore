@@ -23,5 +23,6 @@ out.py
 tests/*/generated.py
 tests/*/plan.py
 tests/*/plan_output.txt
+tests/*.parquet
 tests/*/*.parquet
 editors/zed-floe/grammars/

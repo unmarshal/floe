@@ -148,6 +148,44 @@ generateEntry params steps strict =
 -- Table Binding Generation
 -----------------------------------------------------------
 
+-- Generate a validation function for a table binding
+generateValidationFn : String -> Schema -> Bool -> List String
+generateValidationFn name schema strict =
+  let fnName = "_validate_" ++ name
+      schemaDict = schemaToPolarsDict schema
+      body =
+        [ "def " ++ fnName ++ "(df):"
+        , ind 4 "_expected_schema = " ++ schemaDict
+        , ind 4 "_int_types = (pl.Int8, pl.Int16, pl.Int32, pl.Int64, pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64)"
+        , ind 4 "_float_types = (pl.Float32, pl.Float64)"
+        , ind 4 "def _check_type(actual, expected):"
+        , ind 8 "if expected == 'int': return actual in _int_types"
+        , ind 8 "if expected == 'float': return actual in _float_types"
+        , ind 8 "if expected == 'string': return actual == pl.String"
+        , ind 8 "if expected == 'bool': return actual == pl.Boolean"
+        , ind 8 "if expected.startswith('decimal:'):"
+        , ind 12 "parts = expected.split(':')"
+        , ind 12 "return actual == pl.Decimal(precision=int(parts[1]), scale=int(parts[2]))"
+        , ind 8 "if expected == 'list': return isinstance(actual, pl.List)"
+        , ind 8 "return False"
+        , ind 4 "for _col, _expected in _expected_schema.items():"
+        , ind 8 "if _col not in df.columns:"
+        , ind 12 "raise ValueError(f\"Missing column: {_col}\")"
+        , ind 8 "if not _check_type(df.schema[_col], _expected):"
+        , ind 12 "raise TypeError(f\"Column '{_col}': expected {_expected}, got {df.schema[_col]}\")"
+        ]
+      nullCheck = if strict && not (null (nonNullableCols schema))
+        then
+          [ ind 4 "_non_nullable = " ++ nonNullableColsList schema
+          , ind 4 "for _col in _non_nullable:"
+          , ind 8 "_null_count = df[_col].null_count()"
+          , ind 8 "if _null_count > 0:"
+          , ind 12 "raise ValueError(f\"Column '{_col}' has {_null_count} null values but is declared non-nullable\")"
+          ]
+        else []
+      returnStmt = [ind 4 "return df", ""]
+  in body ++ nullCheck ++ returnStmt
+
 -- Generate a table binding from STableBind
 -- Uses lazy scan for compatibility with sinks
 generateTableBindingExpr : STableExpr -> String
@@ -157,7 +195,21 @@ generateTableBindingExpr (STPipe _ inner fnName) =
   generateTableBindingExpr inner ++ ".pipe(" ++ fnName ++ ")"
 generateTableBindingExpr (STVar _ name) = name
 
--- For table bindings that use STableExpr (new style)
+-- For table bindings that use STableExpr (new style) - with validation
+generateTableBindFromExprWithValidation : String -> STableExpr -> String
+generateTableBindFromExprWithValidation name expr =
+  let baseExpr = generateTableBindingExpr expr
+      -- Insert validation after the scan, before any pipes
+  in name ++ " = " ++ insertValidation name expr
+  where
+    insertValidation : String -> STableExpr -> String
+    insertValidation n (STRead _ file schema) =
+      "pl.read_parquet(\"" ++ file ++ "\").pipe(_validate_" ++ n ++ ").lazy()"
+    insertValidation n (STPipe _ inner fnName) =
+      insertValidation n inner ++ ".pipe(" ++ fnName ++ ")"
+    insertValidation n (STVar _ vname) = vname
+
+-- For table bindings without validation (plan mode)
 generateTableBindFromExpr : String -> STableExpr -> String
 generateTableBindFromExpr name expr =
   name ++ " = " ++ generateTableBindingExpr expr
@@ -212,14 +264,18 @@ generateSinks showPlan sinks =
 -----------------------------------------------------------
 
 -- Generate table expression bindings (new style, uses lazy scan)
-generateTableExprBinding : TableExprBinding -> String
-generateTableExprBinding tb = generateTableBindFromExpr tb.name tb.expr
+-- With validation when not in plan mode
+generateTableExprBindingWithValidation : Bool -> TableExprBinding -> String
+generateTableExprBindingWithValidation True tb = generateTableBindFromExpr tb.name tb.expr  -- plan mode: no validation
+generateTableExprBindingWithValidation False tb = generateTableBindFromExprWithValidation tb.name tb.expr  -- normal mode: with validation
 
 export covering
 renderPolarsPython : GeneratedProgram -> String
 renderPolarsPython prog =
   let header = preamble
       consts = generateConsts prog.consts
+      strict = not prog.options.lenient
+      showPlan = prog.options.showPlan
       -- Legacy table bindings (eager, for joins) - only used when no sinks
       legacyTables = map generateTableBinding prog.tables
       legacyTableSection = if null prog.sinks && not (null legacyTables)
@@ -227,20 +283,24 @@ renderPolarsPython prog =
                            else []
       -- Functions must come before new-style table bindings (which may reference them)
       fns = concatMap (generateFn prog.consts prog.fnDefs) prog.functions
+      -- Validation functions for table bindings (only in normal mode, not plan mode)
+      validationFns = if showPlan
+                      then []
+                      else concatMap (\tb => generateValidationFn tb.name tb.schema strict) prog.tableExprs
       -- New-style table expression bindings (lazy, for sinks) - come after functions
-      newTables = map generateTableExprBinding prog.tableExprs
+      newTables = map (generateTableExprBindingWithValidation showPlan) prog.tableExprs
       newTableSection = if not (null prog.sinks) && not (null newTables)
                         then newTables ++ [""]
                         else []
       -- New declarative sinks (preferred)
       sinkSection = if null prog.sinks
                     then []
-                    else generateSinks prog.options.showPlan prog.sinks
+                    else generateSinks showPlan prog.sinks
       -- Legacy main-based entry (for backwards compatibility)
       entry = if null prog.entrySteps
               then []
-              else generateEntry prog.entryParams prog.entrySteps (not prog.options.lenient)
-  in lines (header ++ consts ++ legacyTableSection ++ fns ++ newTableSection ++ sinkSection ++ entry)
+              else generateEntry prog.entryParams prog.entrySteps strict
+  in lines (header ++ consts ++ legacyTableSection ++ fns ++ validationFns ++ newTableSection ++ sinkSection ++ entry)
 
 -----------------------------------------------------------
 -- Backend Instance

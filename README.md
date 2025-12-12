@@ -66,6 +66,8 @@ let enrichOrders : Order -> EnrichedOrder =
 line 3, col 27: Column 'user_id' not found in schema
 ```
 
+The generated code also validates input files at runtime, ensuring the actual parquet schema matches your declared types (including nullability).
+
 ## Quick Start
 
 ```bash

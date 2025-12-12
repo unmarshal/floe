@@ -1,14 +1,11 @@
-# Test: Schema type behavior with Decimal vs Float
+# Test: Schema type mismatch validation
 #
-# Note: In lazy mode, Polars doesn't validate types at scan time.
-# The type mismatch between declared Decimal(10, 2) and provided Float64
-# will be handled at query execution time by Polars' type system.
-# This test now verifies that the pipeline processes the data
-# (Polars will coerce or use the actual file types).
+# Verifies that runtime validation catches type mismatches between
+# the declared schema and the actual parquet file contents.
 
 import polars as pl
 
-# Provide Float64 instead of Decimal(10, 2) - Polars will use actual file types
+# Provide Float64 instead of Decimal(10, 2)
 inputs = {
     "input.parquet": {
         "id": ["A", "B", "C"],
@@ -16,8 +13,9 @@ inputs = {
     }
 }
 
-# In lazy mode, Polars reads what's in the file
-expected_output = {
-    "id": ["A", "B", "C"],
-    "amount": [100.00, 50.00, 75.50],
-}
+# This test expects a runtime failure due to type mismatch
+expect_failure = True
+expected_error = "Column 'amount': expected decimal:10:2, got Float64"
+
+# Not used since we expect failure, but required by test runner
+expected_output = {}
