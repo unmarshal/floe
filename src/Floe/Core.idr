@@ -413,6 +413,13 @@ data Pipeline : Schema -> Schema -> Type where
        -> Pipeline (MergeSchemas sIn sRight rightCol) sOut
        -> Pipeline sIn sOut
 
+  -- Reference to another named pipeline
+  -- The sMid schema is the output of the referenced pipeline
+  PipeRef : (name : String)
+          -> (sMid : Schema)
+          -> Pipeline sMid sOut
+          -> Pipeline sIn sOut
+
 -----------------------------------------------------------
 -- Decidable Column Lookup
 -----------------------------------------------------------

@@ -280,6 +280,7 @@ data SOp
   | STransform Span (List String) String -- transform [a, b] fn_name
   | SUniqueBy Span SExpr                 -- unique_by .field
   | SJoin Span String SJoinOn            -- join table_name on .left == .right
+  | SPipelineRef Span String             -- reference to another pipeline
 
 public export covering
 Show SOp where
@@ -292,6 +293,7 @@ Show SOp where
   show (STransform _ cols fn) = "transform " ++ show cols ++ " " ++ fn
   show (SUniqueBy _ e) = "uniqueBy " ++ show e
   show (SJoin _ tbl on) = "join " ++ tbl ++ " on ." ++ on.leftCol ++ " == ." ++ on.rightCol
+  show (SPipelineRef _ name) = name
 
 public export
 opSpan : SOp -> Span
@@ -304,6 +306,7 @@ opSpan (SMap s _) = s
 opSpan (STransform s _ _) = s
 opSpan (SUniqueBy s _) = s
 opSpan (SJoin s _ _) = s
+opSpan (SPipelineRef s _) = s
 
 -----------------------------------------------------------
 -- Pipelines

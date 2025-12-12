@@ -820,6 +820,23 @@ elabOp ctx sIn (SJoin span tableName joinOn) =
             Just prfR =>
               ok (MergeSchemas sIn sRight joinOn.rightCol ** Join tableName sRight joinOn.leftCol joinOn.rightCol prfL prfR Done)
 
+-- Pipeline reference: call another named pipeline
+elabOp ctx sIn (SPipelineRef span name) =
+  case lookupPipeline name ctx of
+    Nothing => err (ParseError span ("Pipeline '" ++ name ++ "' is not defined"))
+    Just (expectedIn, sOut) =>
+      case decEq sIn expectedIn of
+        Yes Refl => ok (sOut ** PipeRef name sOut Done)
+        No _ => err (ParseError span ("Pipeline '" ++ name ++ "' expects input schema " ++ showSchemaNames expectedIn ++ " but got " ++ showSchemaNames sIn))
+  where
+    joinWith : String -> List String -> String
+    joinWith _ [] = ""
+    joinWith _ [x] = x
+    joinWith sep (x :: xs) = x ++ sep ++ joinWith sep xs
+    showSchemaNames : Schema -> String
+    showSchemaNames [] = "{}"
+    showSchemaNames fs = "{" ++ joinWith ", " (map (.name) fs) ++ "}"
+
 -----------------------------------------------------------
 -- Elaborate Operation Sequence
 -----------------------------------------------------------
@@ -836,6 +853,7 @@ chain (MapFields assigns spreadCols rest) p2 = MapFields assigns spreadCols (cha
 chain (Transform cols ch fnInTy fnOutTy prf rest) p2 = Transform cols ch fnInTy fnOutTy prf (chain rest p2)
 chain (UniqueBy col prf rest) p2 = UniqueBy col prf (chain rest p2)
 chain (Join tbl sRight lCol rCol prfL prfR rest) p2 = Join tbl sRight lCol rCol prfL prfR (chain rest p2)
+chain (PipeRef name sMid rest) p2 = PipeRef name sMid (chain rest p2)
 
 -- Chain operations together
 public export

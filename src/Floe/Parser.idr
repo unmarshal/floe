@@ -890,7 +890,8 @@ pOp st = do
       ((), st) <- expect TDot st
       (rightCol, st) <- pFieldIdent st   -- field names can have underscores
       Right (SJoin sp tableName (MkSJoinOn leftCol rightCol), st)
-    _ => Left (ParseError sp ("Unknown operation: " ++ kw))
+    -- Any other identifier is treated as a pipeline reference
+    _ => Right (SPipelineRef sp kw, st)
 
 -----------------------------------------------------------
 -- Pipeline Parser (op >> op >> op [where ...])

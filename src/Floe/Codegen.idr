@@ -423,6 +423,9 @@ toPolarsWithConstsAndFns consts fnDefs (UniqueBy col _ rest) df =
 toPolarsWithConstsAndFns consts fnDefs (Join tableName sRight leftCol rightCol _ _ rest) df =
   -- Generate: df.join(tableName, left_on="leftCol", right_on="rightCol")
   toPolarsWithConstsAndFns consts fnDefs rest (df ++ ".join(" ++ tableName ++ ", left_on=\"" ++ leftCol ++ "\", right_on=\"" ++ rightCol ++ "\")")
+toPolarsWithConstsAndFns consts fnDefs (PipeRef name sMid rest) df =
+  -- Generate: df.pipe(name)
+  toPolarsWithConstsAndFns consts fnDefs rest (df ++ ".pipe(" ++ name ++ ")")
 
 -- Convenience wrapper with only function definitions
 public export

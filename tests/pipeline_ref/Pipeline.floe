@@ -1,0 +1,36 @@
+-- Test: Pipeline references
+-- Compose pipelines by referencing other named pipelines
+
+schema A {
+    x: String,
+    y: Int64,
+}
+
+schema B {
+    x: String,
+    z: Int64,
+}
+
+schema C {
+    x: String,
+    z: Int64,
+    label: String,
+}
+
+let step1 : A -> B =
+    rename y z
+
+let step2 : B -> C =
+    map {
+        x: .x,
+        z: .z,
+        label: if .z > 10 then "big" else "small",
+    }
+
+-- Compose using pipeline references
+let fullPipeline : A -> C =
+    step1 >> step2
+
+let result = read "input.parquet" as A |> fullPipeline
+
+sink "output.parquet" result
