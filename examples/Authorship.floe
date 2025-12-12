@@ -31,8 +31,9 @@ schema TransformedAuthorship {
     authorship_id: UInt64,
 }
 
--- Authorship node output schema (just the affiliation strings after dedup)
+-- Authorship node output schema
 schema AuthorshipNode {
+    authorship_id: UInt64,
     raw_affiliation_strings: String,
 }
 
@@ -85,7 +86,7 @@ let initialTransforms : WorkAuthorship -> TransformedAuthorship =
 
 -- Generate authorship nodes
 let authorshipNodes : TransformedAuthorship -> AuthorshipNode =
-    select [raw_affiliation_strings]
+    select [authorship_id, raw_affiliation_strings]
 
 -- Generate CONTRIBUTOR_TO edges (author -> authorship)
 let contributorTo : TransformedAuthorship -> ContributorTo =
