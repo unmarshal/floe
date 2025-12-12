@@ -1,6 +1,6 @@
 # Floe
 
-A dependently-typed compiler for a declarative data pipeline DSL with compile-time schema safety.
+A declarative DSL for Polars with compile-time schema validation.
 
 ## The Problem
 
@@ -8,7 +8,7 @@ Data pipelines fail at runtime with schema mismatches, missing columns, and type
 
 ## The Solution
 
-Floe is a purely declarative language that uses dependent types to make invalid pipelines unrepresentable. If your pipeline compiles, every column reference is valid, every type matches, and the output schema is exactly what you declared.
+Floe is a purely declarative language where invalid pipelines don't compile. If your pipeline compiles, every column reference is valid, every type matches, and the output schema is exactly what you declared.
 
 ```haskell
 schema Order {
@@ -67,6 +67,25 @@ line 3, col 27: Column 'user_id' not found in schema
 ```
 
 The generated code also validates input files at runtime, ensuring the actual parquet schema matches your declared types (including nullability).
+
+## How It Works
+
+Floe compiles to Polars - you write declarative pipeline definitions, and the compiler generates efficient Python code using Polars' lazy evaluation.
+
+The key insight is that data pipelines are fundamentally about **schema transformations**. A pipeline takes data with one shape and produces data with another shape. By treating schemas as types, the compiler can verify that every operation is valid before any code runs.
+
+```
+.floe source → Parser → Surface AST → Elaboration → Typed IR → Python/Polars
+                                           ↓
+                                    (schema errors caught here)
+```
+
+During elaboration, the compiler tracks the schema through each operation:
+- Column references must exist in the current schema
+- Types must match for comparisons and joins  
+- The final output must match the declared schema
+
+The compiler is written in Idris, a dependently-typed language. When elaboration succeeds, Idris has *proven* the pipeline is correct. The generated Polars code cannot have schema errors.
 
 ## Quick Start
 
@@ -250,9 +269,49 @@ Builtins can be chained: `trim >> toLowercase >> stripPrefix "https://"`
 | `toUppercase` | Convert to uppercase |
 | `trim` | Remove leading/trailing whitespace |
 | `lenChars` | String length in characters |
-| `replace` | Replace substring |
-| `stripPrefix` | Remove prefix if present |
-| `stripSuffix` | Remove suffix if present |
+| `replace old new` | Replace substring |
+| `stripPrefix str` | Remove prefix if present |
+| `stripSuffix str` | Remove suffix if present |
+| `fillNull value` | Replace nulls with a value (e.g., `fillNull ""`) |
+
+### Filter Expressions
+
+The `filter` operation supports the following expressions:
+
+| Expression | Description | Example |
+|------------|-------------|---------|
+| `.col` | Boolean column must be true | `filter .is_active` |
+| `.col == value` | Equality comparison | `filter .status == "active"` |
+| `.col != value` | Inequality | `filter .status != "cancelled"` |
+| `.col < value` | Less than | `filter .age < 18` |
+| `.col > value` | Greater than | `filter .price > 100` |
+| `.col <= value` | Less than or equal | `filter .score <= 50` |
+| `.col >= value` | Greater than or equal | `filter .quantity >= minQty` |
+| `.col == .other` | Column vs column (types must match) | `filter .price <= .budget` |
+| `expr && expr` | Logical AND | `filter .active && .verified` |
+| `expr \|\| expr` | Logical OR | `filter .vip \|\| .premium` |
+
+Values can be literals (`"string"`, `123`, `True`) or references to `let` constants.
+
+### Map Expressions
+
+Inside a `map { ... }` block, you can use the following expressions:
+
+| Expression | Description | Example |
+|------------|-------------|---------|
+| `.column` | Column reference | `.name` |
+| `"string"` | String literal | `"active"` |
+| `123` | Integer literal (Int64) | `100` |
+| `3.14` | Float literal (Float64) | `0.05` |
+| `True` / `False` | Boolean literal | `True` |
+| `constant` | Reference to a `let` constant | `minPrice` |
+| `.col as Type` | Cast to type | `.amount as Float64` |
+| `.a + .b` | Arithmetic (`+`, `-`, `*`, `/`) | `.price * .quantity` |
+| `.a ++ .b` | String concatenation | `.first ++ " " ++ .last` |
+| `if cond then x else y` | Conditional | `if .score > 80 then "pass" else "fail"` |
+| `hash [.a, .b]` | Hash columns to UInt64 | `hash [.id, .name]` |
+| `builtin .col` | Apply builtin to column | `toUppercase .email` |
+| `...` | Spread (include unconsumed columns) | `...` |
 
 ### Cast
 

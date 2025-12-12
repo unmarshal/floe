@@ -106,17 +106,6 @@ let authorOf : TransformedAuthorship -> AuthorOf =
 -- Load org nodes for AFFILIATION_WITH join
 let orgNodes = read "oa_org_nodes.parquet" as OrgNode
 
--- Schema after joining with org nodes
-schema JoinedAuthorship {
-    publication_id: String,
-    author_position: String,
-    author_id: String,
-    affiliated_organization_id: String,
-    raw_affiliation_strings: String,
-    authorship_id: UInt64,
-    id: String,
-}
-
 -- Generate AFFILIATION_WITH edges (authorship -> organization)
 let affiliationWith : TransformedAuthorship -> AffiliationWith =
     join orgNodes on .affiliated_organization_id == .source_id >>

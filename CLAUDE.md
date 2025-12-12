@@ -1,6 +1,6 @@
 # Floe
 
-A dependently-typed compiler for a declarative data pipeline DSL that generates Python/Polars code with compile-time schema safety guarantees.
+A declarative DSL for Polars with compile-time schema validation.
 
 Floe is a purely declarative language - there is no imperative control flow. Pipelines are defined as compositions of transforms, and the compiler generates efficient lazy Polars query plans that are executed together via `pl.collect_all()`.
 
@@ -475,4 +475,5 @@ The extension provides syntax highlighting for `.floe` files.
 - [ ] Multi-table join tracking
 - [ ] Join types: left, right, full, semi, anti (currently only inner)
 - [ ] Nested function application in map expressions: `listLen (jsonDecode .col)`
+- [ ] Local bindings in pipelines (`where` clause) - requires whitespace-aware parsing
 - [ ] Rust/Polars codegen backend (currently Python)
