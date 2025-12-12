@@ -417,6 +417,7 @@ getExprSources (SMul _ e1 e2) = getExprSources e1 ++ getExprSources e2
 getExprSources (SDiv _ e1 e2) = getExprSources e1 ++ getExprSources e2
 getExprSources (SMod _ e1 e2) = getExprSources e1 ++ getExprSources e2
 getExprSources (SConcat _ e1 e2) = getExprSources e1 ++ getExprSources e2
+getExprSources (SAuto _) = []
 getExprSources (SCast _ expr _) = getExprSources expr
 
 -- Get columns consumed by explicit field assignments
@@ -1183,6 +1184,43 @@ validatePipelineBindings ctx (b :: rest) = do
   ctx' <- validatePipelineBinding ctx b
   validatePipelineBindings ctx' rest
 
+-- Validate a partition expression against a schema
+-- Partition expressions can be:
+--   .col           - partition by column value (must exist in schema)
+--   .col % auto    - hash partition (col must be numeric, auto is resolved at runtime)
+--   .col % N       - hash partition with explicit count
+validatePartitionExpr : Context -> Span -> Schema -> SExpr -> Result ()
+validatePartitionExpr ctx sp schema expr = case expr of
+  SColRef _ col =>
+    case findCol schema col of
+      Nothing => err (ColNotFound sp col schema)
+      Just _ => ok ()
+  SMod _ left right => do
+    -- Left side should be a column reference or expression
+    validatePartitionExpr ctx sp schema left
+    -- Right side can be 'auto' or an integer literal
+    case right of
+      SAuto _ => ok ()
+      SIntLit _ _ => ok ()
+      _ => err (ParseError sp "Partition modulo must use 'auto' or an integer literal")
+  _ => err (ParseError sp "Invalid partition expression - must be .column or (.column % auto)")
+
+-- Validate a single sink
+validateSink : Context -> (Span, String, STableExpr, Maybe SExpr) -> Result ()
+validateSink ctx (sp, _, tableExpr, Nothing) = ok ()  -- No partition expression, nothing to validate
+validateSink ctx (sp, _, tableExpr, Just partExpr) = do
+  -- Get the output schema of the table expression
+  (_, outputSchema) <- computeTableExprSchemas ctx sp tableExpr
+  -- Validate the partition expression against this schema
+  validatePartitionExpr ctx (exprSpan partExpr) outputSchema partExpr
+
+-- Validate all sinks
+validateSinks : Context -> List (Span, String, STableExpr, Maybe SExpr) -> Result ()
+validateSinks ctx [] = ok ()
+validateSinks ctx (sink :: rest) = do
+  validateSink ctx sink
+  validateSinks ctx rest
+
 public export
 elabProgram : SProgram -> Result Context
 elabProgram prog = do
@@ -1212,4 +1250,6 @@ elabProgram prog = do
   ctx <- validatePipelineBindings ctx (getBindings prog)
   -- Thirteenth pass: validate main entry point
   validateMain ctx (getMain prog)
+  -- Fourteenth pass: validate top-level sinks (partition expressions)
+  validateSinks ctx (getSinks prog)
   ok ctx

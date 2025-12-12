@@ -1458,6 +1458,87 @@
         {
           "type": "SYMBOL",
           "name": "identifier"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "partition_clause"
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        }
+      ]
+    },
+    "partition_clause": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "partitionBy"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "partition_expr"
+        }
+      ]
+    },
+    "partition_expr": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "column_ref"
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "STRING",
+              "value": "("
+            },
+            {
+              "type": "SYMBOL",
+              "name": "partition_mod_expr"
+            },
+            {
+              "type": "STRING",
+              "value": ")"
+            }
+          ]
+        }
+      ]
+    },
+    "partition_mod_expr": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "column_ref"
+        },
+        {
+          "type": "STRING",
+          "value": "%"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_partition_divisor"
+        }
+      ]
+    },
+    "_partition_divisor": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "auto"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "number"
         }
       ]
     },

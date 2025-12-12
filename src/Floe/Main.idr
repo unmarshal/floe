@@ -138,9 +138,9 @@ extractColFnDefs (b :: rest) =
     _ => extractColFnDefs rest
 
 -- Build sink definitions from top-level sinks
-buildSinks : List (Span, String, STableExpr) -> List SinkDef
+buildSinks : List (Span, String, STableExpr, Maybe SExpr) -> List SinkDef
 buildSinks [] = []
-buildSinks ((_, file, expr) :: rest) = MkSinkDef file expr :: buildSinks rest
+buildSinks ((_, file, expr, partExpr) :: rest) = MkSinkDef file expr partExpr :: buildSinks rest
 
 -- Build the complete GeneratedProgram
 buildProgram : CompileOptions -> Context -> SProgram -> Either FloeError GeneratedProgram

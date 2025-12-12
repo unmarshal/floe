@@ -36,6 +36,46 @@ joinWith sep (x :: xs) = x ++ sep ++ joinWith sep xs
 preamble : List String
 preamble = ["import polars as pl", ""]
 
+-- Preamble with pyarrow for partition count estimation
+preambleWithPyarrow : List String
+preambleWithPyarrow =
+  [ "import polars as pl"
+  , "import pyarrow.parquet as pq"
+  , ""
+  ]
+
+-- Helper function to estimate partition count from parquet metadata
+partitionCountHelper : List String
+partitionCountHelper =
+  [ "def _estimate_partition_count(file_path, target_rows_per_partition=1_000_000):"
+  , "    \"\"\"Estimate partition count based on parquet metadata.\"\"\""
+  , "    metadata = pq.read_metadata(file_path)"
+  , "    row_count = metadata.num_rows"
+  , "    # Aim for ~1M rows per partition, minimum 1, maximum 256"
+  , "    count = max(1, min(256, row_count // target_rows_per_partition))"
+  , "    return count"
+  , ""
+  ]
+
+-- Check if a partition expression uses 'auto'
+usesAuto : SExpr -> Bool
+usesAuto (SAuto _) = True
+usesAuto (SMod _ left right) = usesAuto left || usesAuto right
+usesAuto _ = False
+
+-- Check if any sink uses 'auto' partitioning
+anyUsesAuto : List SinkDef -> Bool
+anyUsesAuto [] = False
+anyUsesAuto (sink :: rest) = case sink.partitionBy of
+  Nothing => anyUsesAuto rest
+  Just expr => usesAuto expr || anyUsesAuto rest
+
+-- Get the source file from a table expression (for partition count estimation)
+getTableExprSourceFile : STableExpr -> Maybe String
+getTableExprSourceFile (STRead _ file _) = Just file
+getTableExprSourceFile (STPipe _ inner _) = getTableExprSourceFile inner
+getTableExprSourceFile (STVar _ _) = Nothing  -- Would need to resolve variable
+
 -----------------------------------------------------------
 -- Constant Generation
 -----------------------------------------------------------
@@ -197,19 +237,47 @@ generateTableBindingExpr (STPipe _ inner fnName) =
   generateTableBindingExpr inner ++ ".pipe(" ++ fnName ++ ")"
 generateTableBindingExpr (STVar _ name) = name
 
--- For table bindings that use STableExpr (new style) - with validation
-generateTableBindFromExprWithValidation : String -> STableExpr -> String
-generateTableBindFromExprWithValidation name expr =
-  let baseExpr = generateTableBindingExpr expr
-      -- Insert validation after the scan, before any pipes
-  in name ++ " = " ++ insertValidation name expr
+-- Check if a source path depends on an output path
+-- Handles cases like:
+--   source: "dir/**/*.parquet" depends on output: "dir/"
+--   source: "file.parquet" depends on output: "file.parquet"
+pathDependsOn : String -> String -> Bool
+pathDependsOn source output =
+  source == output ||
+  -- Check if source is a glob pattern under the output directory
+  isPrefixOf output source ||
+  -- Check if output directory (with trailing /) is prefix of source
+  (isSuffixOf "/" output && isPrefixOf output source) ||
+  -- Check if output without trailing / is prefix of source path
+  isPrefixOf (if isSuffixOf "/" output then output else output ++ "/") source
+
+-- Check if a file path reads from an intermediate (sink output)
+isIntermediateFile : List String -> String -> Bool
+isIntermediateFile sinkOutputs file =
+  any (\out => pathDependsOn file out) sinkOutputs
+
+-- Check if a table expression reads from an intermediate file
+isIntermediateTableExpr : List String -> STableExpr -> Bool
+isIntermediateTableExpr sinkOutputs (STRead _ file _) = isIntermediateFile sinkOutputs file
+isIntermediateTableExpr sinkOutputs (STPipe _ inner _) = isIntermediateTableExpr sinkOutputs inner
+isIntermediateTableExpr _ (STVar _ _) = False
+
+-- For table bindings that use STableExpr (new style)
+-- Validates external inputs, skips validation for intermediates
+generateTableBindFromExprWithValidation : List String -> String -> STableExpr -> String
+generateTableBindFromExprWithValidation sinkOutputs name expr =
+  name ++ " = " ++ generate name expr
   where
-    insertValidation : String -> STableExpr -> String
-    insertValidation n (STRead _ file schema) =
-      "pl.read_parquet(\"" ++ file ++ "\").pipe(_validate_" ++ n ++ ").lazy()"
-    insertValidation n (STPipe _ inner fnName) =
-      insertValidation n inner ++ ".pipe(" ++ fnName ++ ")"
-    insertValidation n (STVar _ vname) = vname
+    generate : String -> STableExpr -> String
+    generate n (STRead _ file schema) =
+      if isIntermediateFile sinkOutputs file
+        then -- Intermediate file: trust compiler, use scan_parquet
+          "pl.scan_parquet(\"" ++ file ++ "\")"
+        else -- External input: validate schema at read time
+          "pl.read_parquet(\"" ++ file ++ "\").pipe(_validate_" ++ n ++ ").lazy()"
+    generate n (STPipe _ inner fnName) =
+      generate n inner ++ ".pipe(" ++ fnName ++ ")"
+    generate n (STVar _ vname) = vname
 
 -- For table bindings without validation (plan mode)
 generateTableBindFromExpr : String -> STableExpr -> String
@@ -233,12 +301,39 @@ generateTableExpr (STPipe _ inner fnName) =
   generateTableExpr inner ++ ".pipe(" ++ fnName ++ ")"
 generateTableExpr (STVar _ name) = name
 
+-- Generate partition expression for sink_parquet
+-- Returns (PartitionByKey expression, optional with_columns for hash partitioning)
+-- Uses include_key=False to exclude partition column from output files
+generatePartitionExpr : String -> SExpr -> (String, Maybe String)
+generatePartitionExpr file (SColRef _ col) =
+  -- Value-based partition: use the column directly
+  ("pl.PartitionByKey(\"" ++ file ++ "\", by=\"" ++ col ++ "\", include_key=False)", Nothing)
+generatePartitionExpr file (SMod _ (SColRef _ col) (SAuto _)) =
+  -- Hash partition with auto count: add a _partition_key column, exclude from output
+  ("pl.PartitionByKey(\"" ++ file ++ "\", by=\"_partition_key\", include_key=False)",
+   Just (".with_columns((pl.col(\"" ++ col ++ "\") % _partition_count).alias(\"_partition_key\"))"))
+generatePartitionExpr file (SMod _ (SColRef _ col) (SIntLit _ n)) =
+  -- Hash partition with explicit count: add a _partition_key column, exclude from output
+  ("pl.PartitionByKey(\"" ++ file ++ "\", by=\"_partition_key\", include_key=False)",
+   Just (".with_columns((pl.col(\"" ++ col ++ "\") % " ++ show n ++ ").alias(\"_partition_key\"))"))
+generatePartitionExpr file _ =
+  -- Fallback, shouldn't happen
+  ("pl.PartitionByKey(\"" ++ file ++ "\", by=\"_partition_key\", include_key=False)", Nothing)
+
 -- Generate a lazy sink query
 generateLazySink : Nat -> SinkDef -> String
 generateLazySink idx sink =
   let queryName = "_q" ++ show idx
       tableExpr = generateTableExpr sink.tableExpr
-  in queryName ++ " = " ++ tableExpr ++ ".sink_parquet(\"" ++ sink.file ++ "\", lazy=True)"
+  in case sink.partitionBy of
+    Nothing =>
+      queryName ++ " = " ++ tableExpr ++ ".sink_parquet(\"" ++ sink.file ++ "\", lazy=True)"
+    Just partExpr =>
+      let (partByKey, withCols) = generatePartitionExpr sink.file partExpr
+          baseExpr = case withCols of
+            Nothing => tableExpr
+            Just wc => tableExpr ++ wc
+      in queryName ++ " = " ++ baseExpr ++ ".sink_parquet(" ++ partByKey ++ ", lazy=True)"
 
 -----------------------------------------------------------
 -- Phased Sink Execution (for intermediate file dependencies)
@@ -264,7 +359,7 @@ getSourceFiles bindings (STVar _ name) =
 sinkDependsOn : List TableExprBinding -> SinkDef -> List String -> Bool
 sinkDependsOn bindings sink outputFiles =
   let sources = getSourceFiles bindings sink.tableExpr
-  in any (\s => s `elem` outputFiles) sources
+  in any (\src => any (pathDependsOn src) outputFiles) sources
 
 -- Partition sinks into those that can run now vs those that depend on pending outputs
 partitionSinks : List TableExprBinding -> List SinkDef -> List String -> (List SinkDef, List SinkDef)
@@ -345,14 +440,34 @@ generateSinks showPlan bindings sinks =
 
 -- Generate table expression bindings (new style, uses lazy scan)
 -- With validation when not in plan mode
-generateTableExprBindingWithValidation : Bool -> TableExprBinding -> String
-generateTableExprBindingWithValidation True tb = generateTableBindFromExpr tb.name tb.expr  -- plan mode: no validation
-generateTableExprBindingWithValidation False tb = generateTableBindFromExprWithValidation tb.name tb.expr  -- normal mode: with validation
+-- Find the first sink that uses auto and get its source file
+findAutoSourceFile : List TableExprBinding -> List SinkDef -> Maybe String
+findAutoSourceFile bindings [] = Nothing
+findAutoSourceFile bindings (sink :: rest) = case sink.partitionBy of
+  Nothing => findAutoSourceFile bindings rest
+  Just expr =>
+    if usesAuto expr
+      then case sink.tableExpr of
+        STVar _ name =>
+          -- Look up the table binding to get the source file
+          case lookupTableExpr bindings name of
+            Just tableExpr => getTableExprSourceFile tableExpr
+            Nothing => findAutoSourceFile bindings rest
+        _ => getTableExprSourceFile sink.tableExpr
+      else findAutoSourceFile bindings rest
+
+-- Generate partition count calculation for auto partitioning
+generatePartitionCountCalc : Maybe String -> List String
+generatePartitionCountCalc Nothing = []
+generatePartitionCountCalc (Just file) =
+  ["_partition_count = _estimate_partition_count(\"" ++ file ++ "\")", ""]
 
 export covering
 renderPolarsPython : GeneratedProgram -> String
 renderPolarsPython prog =
-  let header = preamble
+  let needsAuto = anyUsesAuto prog.sinks
+      header = if needsAuto then preambleWithPyarrow else preamble
+      partitionHelper = if needsAuto then partitionCountHelper else []
       consts = generateConsts prog.consts
       strict = not prog.options.lenient
       showPlan = prog.options.showPlan
@@ -363,15 +478,24 @@ renderPolarsPython prog =
                            else []
       -- Functions must come before new-style table bindings (which may reference them)
       fns = concatMap (generateFn prog.consts prog.fnDefs) prog.functions
-      -- Validation functions for table bindings (only in normal mode, not plan mode)
+      -- Sink output files (to identify intermediate vs external inputs)
+      sinkOutputs = map (.file) prog.sinks
+      -- Validation functions for external inputs (not intermediates)
       validationFns = if showPlan
                       then []
-                      else concatMap (\tb => generateValidationFn tb.name tb.schema strict) prog.tableExprs
+                      else concatMap (\tb => generateValidationFn tb.name tb.schema strict)
+                             (filter (\tb => not (isIntermediateTableExpr sinkOutputs tb.expr)) prog.tableExprs)
       -- New-style table expression bindings (lazy, for sinks) - come after functions
-      newTables = map (generateTableExprBindingWithValidation showPlan) prog.tableExprs
+      newTables = if showPlan
+                    then map (\tb => generateTableBindFromExpr tb.name tb.expr) prog.tableExprs
+                    else map (\tb => generateTableBindFromExprWithValidation sinkOutputs tb.name tb.expr) prog.tableExprs
       newTableSection = if not (null prog.sinks) && not (null newTables)
                         then newTables ++ [""]
                         else []
+      -- Partition count calculation (for auto partitioning)
+      partitionCountCalc = if needsAuto && not showPlan
+                           then generatePartitionCountCalc (findAutoSourceFile prog.tableExprs prog.sinks)
+                           else []
       -- New declarative sinks (preferred)
       sinkSection = if null prog.sinks
                     then []
@@ -380,7 +504,7 @@ renderPolarsPython prog =
       entry = if null prog.entrySteps
               then []
               else generateEntry prog.entryParams prog.entrySteps strict
-  in lines (header ++ consts ++ legacyTableSection ++ fns ++ validationFns ++ newTableSection ++ sinkSection ++ entry)
+  in lines (header ++ partitionHelper ++ consts ++ legacyTableSection ++ fns ++ validationFns ++ newTableSection ++ partitionCountCalc ++ sinkSection ++ entry)
 
 -----------------------------------------------------------
 -- Backend Instance

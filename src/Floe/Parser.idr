@@ -23,6 +23,8 @@ data Token
   | TAs            -- as
   | TWrite         -- write
   | TSink          -- sink (alias for write)
+  | TPartitionBy   -- partitionBy
+  | TAuto          -- auto (runtime-determined value)
   | TWhere         -- where
   | TOn            -- on
   | TIf            -- if
@@ -77,6 +79,8 @@ Show Token where
   show TAs = "as"
   show TWrite = "write"
   show TSink = "sink"
+  show TPartitionBy = "partitionBy"
+  show TAuto = "auto"
   show TWhere = "where"
   show TOn = "on"
   show TIf = "if"
@@ -131,6 +135,8 @@ Eq Token where
   TAs == TAs = True
   TWrite == TWrite = True
   TSink == TSink = True
+  TPartitionBy == TPartitionBy = True
+  TAuto == TAuto = True
   TWhere == TWhere = True
   TOn == TOn = True
   TIf == TIf = True
@@ -326,6 +332,8 @@ keyword "read" = TRead
 keyword "as" = TAs
 keyword "write" = TWrite
 keyword "sink" = TSink
+keyword "partitionBy" = TPartitionBy
+keyword "auto" = TAuto
 keyword "where" = TWhere
 keyword "on" = TOn
 keyword "if" = TIf
@@ -692,6 +700,7 @@ mutual
           _ => Right (SVar tok.span name, st')
       TStrLit s => Right (SStrLit tok.span s, advanceP st)
       TIntLit i => Right (SIntLit tok.span i, advanceP st)
+      TAuto => Right (SAuto tok.span, advanceP st)
       TLParen => do
         let st = advanceP st
         (e, st) <- pExpr st
@@ -1282,11 +1291,17 @@ pTopLevel st =
       (s, st') <- pSchema st
       Right (STLSchema s, st')
     TSink => do
-      -- Top-level sink: sink "file" tableExpr
+      -- Top-level sink: sink "file" tableExpr [partitionBy expr]
       let st' = advanceP st  -- skip 'sink'
       (file, st'') <- pFileArg st'
       (expr, st''') <- pTableExpr st''
-      Right (STLSink tok.span file expr, st''')
+      -- Optionally parse partitionBy clause
+      if isToken TPartitionBy st'''
+        then do
+          let st'''' = advanceP st'''  -- skip 'partitionBy'
+          (partExpr, st''''') <- pExpr st''''
+          Right (STLSink tok.span file expr (Just partExpr), st''''')
+        else Right (STLSink tok.span file expr Nothing, st''')
     TLet => do
       -- New unified syntax: let name : Type = value
       -- Or table binding: let name = read "file" as Schema [|> transform]

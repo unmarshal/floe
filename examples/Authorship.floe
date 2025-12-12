@@ -115,17 +115,18 @@ let affiliationWith : TransformedAuthorship -> AffiliationWith =
     }
 
 -- === Pipeline execution ===
--- Phase 1: Transform raw data and write to intermediate file
+-- Phase 1: Transform raw data and write partitioned output
+-- Partitioning by authorship_id % auto allows parallel dedup processing
 let transformed = read "works_authorships.parquet" as WorkAuthorship |> initialTransforms
-sink "transformed_authorship.parquet" transformed
+sink "transformed_authorship/" transformed partitionBy (.authorship_id % auto)
 
--- Phase 2: Read from intermediate file and generate all outputs
--- The compiler detects that these sinks depend on transformed_authorship.parquet
--- and will execute Phase 1 first via pl.collect_all()
-let nodes = read "transformed_authorship.parquet" as TransformedAuthorship |> authorshipNodes
-let contributors = read "transformed_authorship.parquet" as TransformedAuthorship |> contributorTo
-let authors = read "transformed_authorship.parquet" as TransformedAuthorship |> authorOf
-let affiliations = read "transformed_authorship.parquet" as TransformedAuthorship |> affiliationWith
+-- Phase 2: Read from partitioned directory and generate all outputs
+-- Polars scan_parquet automatically handles partitioned datasets
+-- The compiler detects the dependency on transformed_authorship/ and executes Phase 1 first
+let nodes = read "transformed_authorship/**/*.parquet" as TransformedAuthorship |> authorshipNodes
+let contributors = read "transformed_authorship/**/*.parquet" as TransformedAuthorship |> contributorTo
+let authors = read "transformed_authorship/**/*.parquet" as TransformedAuthorship |> authorOf
+let affiliations = read "transformed_authorship/**/*.parquet" as TransformedAuthorship |> affiliationWith
 
 sink "authorship_nodes.parquet" nodes
 sink "CONTRIBUTOR_TO.parquet" contributors

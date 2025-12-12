@@ -64,6 +64,7 @@ record SinkDef where
   constructor MkSinkDef
   file : String                  -- output file path
   tableExpr : STableExpr         -- the table expression to sink
+  partitionBy : Maybe SExpr      -- optional partition expression
 
 -- Complete program representation
 public export

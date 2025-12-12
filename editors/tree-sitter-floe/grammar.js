@@ -245,8 +245,19 @@ module.exports = grammar({
         seq("replace", $.string, $.string),
       ),
 
-    // Top-level sink statement
-    sink_statement: ($) => seq("sink", $.string, $.identifier),
+    // Top-level sink statement with optional partitionBy
+    sink_statement: ($) =>
+      seq("sink", $.string, $.identifier, optional($.partition_clause)),
+
+    partition_clause: ($) => seq("partitionBy", $.partition_expr),
+
+    // Partition expression: .column or (.column % auto) or (.column % number)
+    partition_expr: ($) =>
+      choice($.column_ref, seq("(", $.partition_mod_expr, ")")),
+
+    partition_mod_expr: ($) => seq($.column_ref, "%", $._partition_divisor),
+
+    _partition_divisor: ($) => choice("auto", $.number),
 
     // Literals
     literal: ($) => choice($.string, $.number, $.float, $.boolean),

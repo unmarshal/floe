@@ -178,6 +178,7 @@ data SExpr
   | SMul Span SExpr SExpr            -- expr * expr
   | SDiv Span SExpr SExpr            -- expr / expr
   | SMod Span SExpr SExpr            -- expr % expr
+  | SAuto Span                       -- auto (runtime-determined partition count)
   | SConcat Span SExpr SExpr         -- expr ++ expr (string concatenation)
   | SCast Span SExpr STy             -- expr as Type (cast expression)
 
@@ -209,6 +210,7 @@ Show SExpr where
   show (SMul _ l r) = "(" ++ show l ++ " * " ++ show r ++ ")"
   show (SDiv _ l r) = "(" ++ show l ++ " / " ++ show r ++ ")"
   show (SMod _ l r) = "(" ++ show l ++ " % " ++ show r ++ ")"
+  show (SAuto _) = "auto"
   show (SConcat _ l r) = "(" ++ show l ++ " ++ " ++ show r ++ ")"
   show (SCast _ e t) = show e ++ " as " ++ show t
 
@@ -239,6 +241,7 @@ exprSpan (SSub s _ _) = s
 exprSpan (SMul s _ _) = s
 exprSpan (SDiv s _ _) = s
 exprSpan (SMod s _ _) = s
+exprSpan (SAuto s) = s
 exprSpan (SConcat s _ _) = s
 exprSpan (SCast s _ _) = s
 
@@ -506,7 +509,7 @@ data STopLevel
   = STLSchema SSchema
   | STLBinding SBinding          -- let name : type = value (unified binding)
   | STLTableBind STableBind      -- let name = read "file" as Schema
-  | STLSink Span String STableExpr  -- sink "file" tableExpr (top-level sink)
+  | STLSink Span String STableExpr (Maybe SExpr)  -- sink "file" tableExpr [partitionBy expr]
   | STLMain SMain                -- main [params] = body (legacy, to be removed)
   | STLTransform STransformDef   -- legacy transform block
   -- Legacy constructors (to be removed after migration)
@@ -636,12 +639,12 @@ getTableBinds prog = go prog.items
 
 -- Helper to extract top-level sinks
 public export
-getSinks : SProgram -> List (Span, String, STableExpr)
+getSinks : SProgram -> List (Span, String, STableExpr, Maybe SExpr)
 getSinks prog = go prog.items
   where
-    go : List STopLevel -> List (Span, String, STableExpr)
+    go : List STopLevel -> List (Span, String, STableExpr, Maybe SExpr)
     go [] = []
-    go (STLSink sp file expr :: rest) = (sp, file, expr) :: go rest
+    go (STLSink sp file expr partExpr :: rest) = (sp, file, expr, partExpr) :: go rest
     go (_ :: rest) = go rest
 
 -----------------------------------------------------------
