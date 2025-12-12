@@ -240,10 +240,81 @@ generateLazySink idx sink =
       tableExpr = generateTableExpr sink.tableExpr
   in queryName ++ " = " ++ tableExpr ++ ".sink_parquet(\"" ++ sink.file ++ "\", lazy=True)"
 
--- Generate all sinks with collect_all (or explain for --plan mode)
-generateSinks : Bool -> List SinkDef -> List String
-generateSinks _ [] = []
-generateSinks showPlan sinks =
+-----------------------------------------------------------
+-- Phased Sink Execution (for intermediate file dependencies)
+-----------------------------------------------------------
+
+-- Look up a table binding by name to get its expression
+lookupTableExpr : List TableExprBinding -> String -> Maybe STableExpr
+lookupTableExpr [] _ = Nothing
+lookupTableExpr (tb :: rest) name =
+  if tb.name == name then Just tb.expr else lookupTableExpr rest name
+
+-- Extract all source files from a table expression, resolving variable references
+getSourceFiles : List TableExprBinding -> STableExpr -> List String
+getSourceFiles bindings (STRead _ file _) = [file]
+getSourceFiles bindings (STPipe _ inner _) = getSourceFiles bindings inner
+getSourceFiles bindings (STVar _ name) =
+  -- Look up the variable in table bindings and recurse
+  case lookupTableExpr bindings name of
+    Just expr => getSourceFiles bindings expr
+    Nothing => []  -- Variable not found (shouldn't happen in valid program)
+
+-- Check if a sink depends on any of the given output files
+sinkDependsOn : List TableExprBinding -> SinkDef -> List String -> Bool
+sinkDependsOn bindings sink outputFiles =
+  let sources = getSourceFiles bindings sink.tableExpr
+  in any (\s => s `elem` outputFiles) sources
+
+-- Partition sinks into those that can run now vs those that depend on pending outputs
+partitionSinks : List TableExprBinding -> List SinkDef -> List String -> (List SinkDef, List SinkDef)
+partitionSinks bindings sinks pendingOutputs =
+  partition (\s => not (sinkDependsOn bindings s pendingOutputs)) sinks
+
+-- Order sinks into phases based on dependencies
+-- Returns list of phases, where each phase is a list of sinks that can run together
+orderSinkPhases : List TableExprBinding -> List SinkDef -> List (List SinkDef)
+orderSinkPhases bindings [] = []
+orderSinkPhases bindings sinks =
+  let allOutputs = map (.file) sinks
+      -- First phase: sinks that don't depend on any other sink's output
+      (phase1, remaining) = partitionSinks bindings sinks allOutputs
+  in if null phase1
+     then -- No progress possible - there's a cycle or all sinks are independent
+          -- Fall back to running all together
+          [sinks]
+     else if null remaining
+          then [phase1]
+          else -- Recurse: remaining sinks may depend on phase1 outputs
+               let phase1Outputs = map (.file) phase1
+               in phase1 :: orderSinkPhasesHelper remaining phase1Outputs
+  where
+    -- Helper that tracks which outputs are now available
+    orderSinkPhasesHelper : List SinkDef -> List String -> List (List SinkDef)
+    orderSinkPhasesHelper [] _ = []
+    orderSinkPhasesHelper remaining availableFiles =
+      let remainingOutputs = map (.file) remaining
+          -- Sinks that only depend on available files (not other remaining sinks)
+          (canRun, stillWaiting) = partition (\s => not (sinkDependsOn bindings s remainingOutputs)) remaining
+      in if null canRun
+         then [remaining]  -- No more progress, run rest together
+         else canRun :: orderSinkPhasesHelper stillWaiting (availableFiles ++ map (.file) canRun)
+
+-- Generate code for a single phase of sinks
+generateSinkPhase : Nat -> List SinkDef -> List String
+generateSinkPhase startIdx [] = []
+generateSinkPhase startIdx sinks =
+  let n = length sinks
+      indices = take n [startIdx..]
+      queryNames = map (\i => "_q" ++ show i) indices
+      sinkLines = zipWith generateLazySink indices sinks
+      collectLine = "pl.collect_all([" ++ joinWith ", " queryNames ++ "])"
+  in sinkLines ++ [collectLine, ""]
+
+-- Generate all sinks with phased collect_all (or explain for --plan mode)
+generateSinks : Bool -> List TableExprBinding -> List SinkDef -> List String
+generateSinks _ _ [] = []
+generateSinks showPlan bindings sinks =
   let n = length sinks
       indices : List Nat
       indices = take n [0..]
@@ -256,10 +327,17 @@ generateSinks showPlan sinks =
              in queryName ++ " = " ++ tableExpr) indices sinks
            explainLines = map (\q => "print(\"=== Query Plan for " ++ q ++ " ===\")\nprint(" ++ q ++ ".explain())") queryNames
        in planLines ++ [""] ++ explainLines
-     else -- Normal mode: execute sinks
-       let sinkLines = zipWith generateLazySink indices sinks
-           collectLine = "pl.collect_all([" ++ joinWith ", " queryNames ++ "])"
-       in sinkLines ++ [collectLine]
+     else -- Normal mode: execute sinks in phases
+       let phases = orderSinkPhases bindings sinks
+           -- Generate each phase with proper indexing
+       in generatePhasesWithIndex 0 phases
+  where
+    generatePhasesWithIndex : Nat -> List (List SinkDef) -> List String
+    generatePhasesWithIndex _ [] = []
+    generatePhasesWithIndex idx (phase :: rest) =
+      let phaseCode = generateSinkPhase idx phase
+          nextIdx = idx + length phase
+      in phaseCode ++ generatePhasesWithIndex nextIdx rest
 
 -----------------------------------------------------------
 -- Full Program Rendering
@@ -297,7 +375,7 @@ renderPolarsPython prog =
       -- New declarative sinks (preferred)
       sinkSection = if null prog.sinks
                     then []
-                    else generateSinks showPlan prog.sinks
+                    else generateSinks showPlan prog.tableExprs prog.sinks
       -- Legacy main-based entry (for backwards compatibility)
       entry = if null prog.entrySteps
               then []

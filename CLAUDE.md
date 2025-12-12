@@ -473,4 +473,6 @@ The extension provides syntax highlighting for `.floe` files.
 
 - [ ] Better error messages with suggestions ("did you mean...?")
 - [ ] Multi-table join tracking
+- [ ] Join types: left, right, full, semi, anti (currently only inner)
+- [ ] Nested function application in map expressions: `listLen (jsonDecode .col)`
 - [ ] Rust/Polars codegen backend (currently Python)

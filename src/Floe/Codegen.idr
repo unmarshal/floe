@@ -294,9 +294,9 @@ assignToPolars : MapAssign s -> String
 assignToPolars (ColAssign new old _) =
   "pl.col(\"" ++ old ++ "\").alias(\"" ++ new ++ "\")"
 assignToPolars (HashAssign new cols _) =
-  -- Generate: pl.concat_str([pl.col("a"), pl.col("b")], separator="-").hash().alias("new")
+  -- Generate: pl.struct([pl.col("a"), ...]).hash().alias("new")
   let colExprs = joinWith ", " (map formatColExpr cols)
-  in "pl.concat_str([" ++ colExprs ++ "], separator=\"-\").hash().alias(\"" ++ new ++ "\")"
+  in "pl.struct([" ++ colExprs ++ "]).hash().alias(\"" ++ new ++ "\")"
 assignToPolars (FnAppAssign new fn col _) =
   -- Placeholder - needs context to resolve fn
   "pl.col(\"" ++ col ++ "\").alias(\"" ++ new ++ "\")"
@@ -310,8 +310,9 @@ assignToPolarsWithContext : List (String, ConstValue) -> List SFnDef -> MapAssig
 assignToPolarsWithContext consts fnDefs (ColAssign new old _) =
   "pl.col(\"" ++ old ++ "\").alias(\"" ++ new ++ "\")"
 assignToPolarsWithContext consts fnDefs (HashAssign new cols _) =
+  -- Generate: pl.struct([pl.col("a"), ...]).hash().alias("new")
   let colExprs = joinWith ", " (map formatColExpr cols)
-  in "pl.concat_str([" ++ colExprs ++ "], separator=\"-\").hash().alias(\"" ++ new ++ "\")"
+  in "pl.struct([" ++ colExprs ++ "]).hash().alias(\"" ++ new ++ "\")"
 assignToPolarsWithContext consts fnDefs (FnAppAssign new fnName col _) =
   case lookupFnDef fnName fnDefs of
     Just fndef =>
@@ -341,7 +342,7 @@ getComputedExprs : List (String, ConstValue) -> List SFnDef -> List (MapAssign s
 getComputedExprs consts fnDefs [] = []
 getComputedExprs consts fnDefs (HashAssign new cols _ :: rest) =
   let colExprs = joinWith ", " (map formatColExpr cols)
-      expr = "pl.concat_str([" ++ colExprs ++ "], separator=\"-\").hash().alias(\"" ++ new ++ "\")"
+      expr = "pl.struct([" ++ colExprs ++ "]).hash().alias(\"" ++ new ++ "\")"
   in expr :: getComputedExprs consts fnDefs rest
 getComputedExprs consts fnDefs (FnAppAssign new fnName col _ :: rest) =
   let expr = case lookupFnDef fnName fnDefs of

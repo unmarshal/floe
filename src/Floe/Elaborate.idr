@@ -457,8 +457,10 @@ elabMapFieldWithCol ctx span s (PFColAssign new old) =
     Nothing => err (ColNotFound span old s)
 elabMapFieldWithCol ctx span s (PFHashAssign new cols) =
   case findAllCols s cols of
-    Just prf => ok (MkCol new TString, HashAssign new cols prf)
     Nothing => err (ParseError span "One or more columns not found in hash")
+    Just prf => case findFirstNullableCol s cols of
+      Just nullCol => err (ParseError span "Column '\{nullCol}' is nullable; use fillNull before hashing")
+      Nothing => ok (MkCol new TUInt64, HashAssign new cols prf)
 elabMapFieldWithCol ctx span s (PFFnApp new fn col) =
   case findCol s col of
     Just (MkColProof t prf) => ok (MkCol new t, FnAppAssign new fn col prf)

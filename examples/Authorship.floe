@@ -1,0 +1,141 @@
+-- Authorship pipeline: Generate graph nodes and edges from OpenAlex authorship data
+--
+-- This replicates the functionality from gimli/src/authorship
+--
+-- Input: works_authorships.parquet (converted from CSV with JSON affiliation strings)
+-- Outputs:
+--   - authorship_nodes.parquet: id, raw_affiliation_strings
+--   - CONTRIBUTOR_TO.parquet: source_id (author), target_id (authorship), author_position
+--   - AUTHOR_OF.parquet: source_id (authorship), target_id (publication)
+--   - AFFILIATION_WITH.parquet: source_id (authorship), target_id (org) - requires join
+
+
+-- Input schema (after CSV->Parquet conversion, raw_affiliation_strings is JSON)
+schema WorkAuthorship {
+    work_id: String,
+    author_position: String,
+    author_id: Maybe String,
+    institution_id: Maybe String,
+    raw_affiliation_strings: String,
+}
+
+-- After initial transforms: renamed columns, stripped prefixes, nulls filled, with authorship_id
+schema TransformedAuthorship {
+    publication_id: String,
+    author_position: String,
+    author_id: String,
+    affiliated_organization_id: String,
+    raw_affiliation_strings: String,
+    authorship_id: UInt64,
+}
+
+-- Authorship node output schema (just the affiliation strings after dedup)
+schema AuthorshipNode {
+    raw_affiliation_strings: String,
+}
+
+-- CONTRIBUTOR_TO edge schema (author -> authorship)
+schema ContributorTo {
+    source_id: String,
+    target_id: UInt64,
+    author_position: String,
+}
+
+-- AUTHOR_OF edge schema (authorship -> publication)
+schema AuthorOf {
+    source_id: UInt64,
+    target_id: String,
+}
+
+-- AFFILIATION_WITH edge schema (authorship -> organization)
+schema AffiliationWith {
+    source_id: UInt64,
+    target_id: String,
+}
+
+-- Organization lookup table schema
+schema OrgNode {
+    id: String,
+    source_id: String,
+}
+
+-- Strip OpenAlex URL prefix
+let stripOAPrefix : String -> String = stripPrefix "https://openalex.org/"
+
+-- Fill nulls with empty string (for nullable String columns)
+let fillEmpty : Maybe String -> String = fillNull ""
+
+-- Initial transforms: rename, fill nulls, strip prefixes, create hash, deduplicate
+let initialTransforms : WorkAuthorship -> TransformedAuthorship =
+    rename work_id publication_id >>
+    rename institution_id affiliated_organization_id >>
+    transform [author_id, affiliated_organization_id] fillEmpty >>
+    transform [publication_id, author_id, affiliated_organization_id] stripOAPrefix >>
+    map {
+        publication_id: .publication_id,
+        author_position: .author_position,
+        author_id: .author_id,
+        affiliated_organization_id: .affiliated_organization_id,
+        raw_affiliation_strings: .raw_affiliation_strings,
+        authorship_id: hash [.publication_id, .author_id, .affiliated_organization_id]
+    } >>
+    uniqueBy .authorship_id
+
+-- Generate authorship nodes
+let authorshipNodes : TransformedAuthorship -> AuthorshipNode =
+    select [raw_affiliation_strings]
+
+-- Generate CONTRIBUTOR_TO edges (author -> authorship)
+let contributorTo : TransformedAuthorship -> ContributorTo =
+    map {
+        source_id: .author_id,
+        target_id: .authorship_id,
+        author_position: .author_position
+    }
+
+-- Generate AUTHOR_OF edges (authorship -> publication)
+let authorOf : TransformedAuthorship -> AuthorOf =
+    map {
+        source_id: .authorship_id,
+        target_id: .publication_id
+    }
+
+-- Load org nodes for AFFILIATION_WITH join
+let orgNodes = read "oa_org_nodes.parquet" as OrgNode
+
+-- Schema after joining with org nodes
+schema JoinedAuthorship {
+    publication_id: String,
+    author_position: String,
+    author_id: String,
+    affiliated_organization_id: String,
+    raw_affiliation_strings: String,
+    authorship_id: UInt64,
+    id: String,
+}
+
+-- Generate AFFILIATION_WITH edges (authorship -> organization)
+let affiliationWith : TransformedAuthorship -> AffiliationWith =
+    join orgNodes on .affiliated_organization_id == .source_id >>
+    map {
+        source_id: .authorship_id,
+        target_id: .id
+    }
+
+-- === Pipeline execution ===
+-- Phase 1: Transform raw data and write to intermediate file
+let transformed = read "works_authorships.parquet" as WorkAuthorship |> initialTransforms
+sink "transformed_authorship.parquet" transformed
+
+-- Phase 2: Read from intermediate file and generate all outputs
+-- The compiler detects that these sinks depend on transformed_authorship.parquet
+-- and will execute Phase 1 first via pl.collect_all()
+let nodes = read "transformed_authorship.parquet" as TransformedAuthorship |> authorshipNodes
+let contributors = read "transformed_authorship.parquet" as TransformedAuthorship |> contributorTo
+let authors = read "transformed_authorship.parquet" as TransformedAuthorship |> authorOf
+let affiliations = read "transformed_authorship.parquet" as TransformedAuthorship |> affiliationWith
+
+sink "authorship_nodes.parquet" nodes
+sink "CONTRIBUTOR_TO.parquet" contributors
+sink "AUTHOR_OF.parquet" authors
+sink "AFFILIATION_WITH.parquet" affiliations

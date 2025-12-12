@@ -495,3 +495,18 @@ findAllMaybeCols s (nm :: nms) = case findCol s nm of
     rest <- findAllMaybeCols s nms
     Just (AllMaybeCons prf rest)
   Just (MkColProof _ _) => Nothing  -- not a Maybe type
+
+-- Check if a type is Maybe
+public export
+isMaybeTy : Ty -> Bool
+isMaybeTy (TMaybe _) = True
+isMaybeTy _ = False
+
+-- Find the first nullable column in a list (for error reporting)
+public export
+findFirstNullableCol : (s : Schema) -> (nms : List String) -> Maybe String
+findFirstNullableCol s [] = Nothing
+findFirstNullableCol s (nm :: nms) = case findCol s nm of
+  Nothing => findFirstNullableCol s nms
+  Just (MkColProof (TMaybe _) _) => Just nm
+  Just _ => findFirstNullableCol s nms
