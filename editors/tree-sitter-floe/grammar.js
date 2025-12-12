@@ -14,8 +14,9 @@ module.exports = grammar({
     _definition: ($) =>
       choice($.schema_definition, $.binding, $.sink_statement),
 
-    // Comments
-    comment: (_) => token(seq("--", /.*/)),
+    // Comments: line (--) and block ({- ... -})
+    comment: (_) =>
+      token(choice(seq("--", /.*/), seq("{-", /([^-]|-[^}])*/, "-}"))),
 
     // Schema definition
     schema_definition: ($) =>

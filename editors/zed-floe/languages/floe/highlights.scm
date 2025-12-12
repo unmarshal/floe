@@ -2,7 +2,6 @@
 [
   "schema"
   "let"
-  "main"
   "if"
   "then"
   "else"
@@ -22,9 +21,9 @@
   "uniqueBy"
   "join"
   "read"
-  "write"
   "sink"
   "hash"
+  "fillNull"
 ] @function.builtin
 
 ; Builtins
@@ -36,7 +35,6 @@
   "stripPrefix"
   "stripSuffix"
   "replace"
-  "cast"
 ] @function.builtin
 
 ; Types

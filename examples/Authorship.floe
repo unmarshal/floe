@@ -1,13 +1,15 @@
--- Authorship pipeline: Generate graph nodes and edges from OpenAlex authorship data
---
--- This replicates the functionality from gimli/src/authorship
---
--- Input: works_authorships.parquet (converted from CSV with JSON affiliation strings)
--- Outputs:
---   - authorship_nodes.parquet: id, raw_affiliation_strings
---   - CONTRIBUTOR_TO.parquet: source_id (author), target_id (authorship), author_position
---   - AUTHOR_OF.parquet: source_id (authorship), target_id (publication)
---   - AFFILIATION_WITH.parquet: source_id (authorship), target_id (org) - requires join
+{-
+Authorship pipeline: Generate graph nodes and edges from OpenAlex authorship data
+
+This replicates the functionality from gimli/src/authorship
+
+Input: works_authorships.parquet (converted from CSV with JSON affiliation strings)
+Outputs:
+  - authorship_nodes.parquet: id, raw_affiliation_strings
+  - CONTRIBUTOR_TO.parquet: source_id (author), target_id (authorship), author_position
+  - AUTHOR_OF.parquet: source_id (authorship), target_id (publication)
+  - AFFILIATION_WITH.parquet: source_id (authorship), target_id (org) - requires join
+-}
 
 
 -- Input schema (after CSV->Parquet conversion, raw_affiliation_strings is JSON)

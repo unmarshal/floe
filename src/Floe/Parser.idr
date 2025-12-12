@@ -231,12 +231,22 @@ skipLineComment st = case st.input of
   ('\n' :: _) => st
   (_ :: rest) => skipLineComment (advance st)
 
--- Skip whitespace and comments
+-- Skip block comment {- ... -}, supporting nesting
+skipBlockComment : Nat -> LexState -> LexState
+skipBlockComment Z st = st  -- depth 0 means we're done
+skipBlockComment (S depth) st = case st.input of
+  [] => st  -- unterminated, but don't error in lexer
+  ('{' :: '-' :: _) => skipBlockComment (S (S depth)) (advanceN 2 st)  -- nested open
+  ('-' :: '}' :: _) => skipBlockComment depth (advanceN 2 st)          -- close
+  (_ :: _) => skipBlockComment (S depth) (advance st)
+
+-- Skip whitespace and comments (both -- line and {- block -})
 skip : LexState -> LexState
 skip st =
   let st' = skipWhitespace st
   in case st'.input of
        ('-' :: '-' :: _) => skip (skipLineComment st')
+       ('{' :: '-' :: _) => skip (skipBlockComment 1 (advanceN 2 st'))
        _ => st'
 
 lexIdent : LexState -> (String, LexState)
