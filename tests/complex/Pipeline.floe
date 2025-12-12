@@ -1,0 +1,97 @@
+-- Complex E-commerce Analytics Pipeline
+-- Tests: joins, filters, maps, conditionals, arithmetic, transforms
+
+schema RawOrder {
+    order_id: String,
+    customer_id: String,
+    product_id: String,
+    quantity: Int64,
+    unit_price: Decimal(10, 2),
+    discount_pct: Int64,
+    status: String,
+    is_priority: Bool,
+}
+
+schema RawCustomer {
+    cust_id: String,
+    full_name: String,
+    email_addr: String,
+    tier: String,
+}
+
+schema Customer {
+    id: String,
+    customer_name: String,
+    email: String,
+    tier: String,
+}
+
+schema RawProduct {
+    prod_id: String,
+    prod_name: String,
+    category: String,
+    in_stock: Bool,
+}
+
+schema Product {
+    id: String,
+    product_name: String,
+    category: String,
+    in_stock: Bool,
+}
+
+schema EnrichedOrder {
+    order_id: String,
+    customer_name: String,
+    customer_tier: String,
+    product_name: String,
+    category: String,
+    quantity: Int64,
+    unit_price: Decimal(10, 2),
+    subtotal: Decimal(10, 2),
+    discount_amount: Decimal(10, 2),
+    final_price: Decimal(10, 2),
+    priority_label: String,
+}
+
+-- Column function for email normalization
+let normalizeEmail : String -> String = trim >> toLowercase
+
+-- Clean up raw customer data
+let cleanCustomer : RawCustomer -> Customer =
+    rename cust_id id >>
+    rename full_name customer_name >>
+    rename email_addr email >>
+    transform [email] normalizeEmail
+
+-- Clean up raw product data
+let cleanProduct : RawProduct -> Product =
+    rename prod_id id >>
+    rename prod_name product_name
+
+-- Load and transform reference tables
+let customers = read "customers.parquet" as RawCustomer |> cleanCustomer
+let products = read "products.parquet" as RawProduct |> cleanProduct
+
+-- Full pipeline: filter, join customers, join products, compute fields
+let processOrders : RawOrder -> EnrichedOrder =
+    filter .status == "completed" >>
+    join customers on .customer_id == .id >>
+    join products on .product_id == .id >>
+    map {
+        order_id: .order_id,
+        customer_name: .customer_name,
+        customer_tier: .tier,
+        product_name: .product_name,
+        category: .category,
+        quantity: .quantity,
+        unit_price: .unit_price,
+        subtotal: .unit_price * .quantity as Decimal(10, 2),
+        discount_amount: .unit_price * .quantity as Decimal(10, 2) * .discount_pct as Decimal(10, 2) / 100 as Decimal(10, 2),
+        final_price: .unit_price * .quantity as Decimal(10, 2) - .unit_price * .quantity as Decimal(10, 2) * .discount_pct as Decimal(10, 2) / 100 as Decimal(10, 2),
+        priority_label: if .is_priority then "PRIORITY" else "standard",
+    }
+
+let result = read "orders.parquet" as RawOrder |> processOrders
+
+sink "output.parquet" result
