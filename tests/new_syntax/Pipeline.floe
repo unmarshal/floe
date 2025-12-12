@@ -13,7 +13,7 @@ schema Output {
 }
 
 -- Constant with explicit type
-let multiplier : Int = 2
+let multiplier : Int64 = 2
 
 -- Pipeline with explicit type annotation
 let transform : Input -> Output =
