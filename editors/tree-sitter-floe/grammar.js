@@ -12,7 +12,7 @@ module.exports = grammar({
     source_file: ($) => repeat($._definition),
 
     _definition: ($) =>
-      choice($.schema_definition, $.binding, $.main_definition),
+      choice($.schema_definition, $.binding, $.sink_statement),
 
     // Comments
     comment: (_) => token(seq("--", /.*/)),
@@ -59,25 +59,32 @@ module.exports = grammar({
 
     decimal_type: ($) => seq("Decimal", "(", $.number, ",", $.number, ")"),
 
-    // Bindings: let name : Type = value  OR  let name = value (table binding)
+    // Bindings: let name : Type = value  OR  let name = table_expr
     binding: ($) =>
       seq(
         "let",
         $.identifier,
         choice(
           seq(":", $.binding_type, "=", $.binding_value),
-          seq("=", $.table_binding),
+          seq("=", $.table_expr),
         ),
       ),
 
-    // Table binding: read "file" as Schema
-    table_binding: ($) => seq("read", $.string, "as", $.type_identifier),
+    // Table expression: read "file" as Schema |> transform |> transform
+    table_expr: ($) =>
+      seq(
+        "read",
+        $.string,
+        "as",
+        $.type_identifier,
+        repeat(seq("|>", $.identifier)),
+      ),
 
     binding_type: ($) =>
       choice(
         $.pipeline_type, // SchemaA -> SchemaB
         $.function_type, // String -> String
-        $.const_type, // Int, String, etc.
+        $.const_type, // Int64, String, etc.
       ),
 
     pipeline_type: ($) => seq($.type_identifier, "->", $.type_identifier),
@@ -88,8 +95,14 @@ module.exports = grammar({
 
     binding_value: ($) => choice($.pipeline, $.function_chain, $.literal),
 
-    // Pipeline: sequence of operations
-    pipeline: ($) => seq($.operation, repeat(seq(">>", $.operation))),
+    // Pipeline: sequence of operations (including pipeline references)
+    pipeline: ($) =>
+      seq($._pipeline_element, repeat(seq(">>", $._pipeline_element))),
+
+    _pipeline_element: ($) => choice($.operation, $.pipeline_ref),
+
+    // Reference to another named pipeline
+    pipeline_ref: ($) => $.identifier,
 
     // Function chain: builtins chained together
     function_chain: ($) =>
@@ -107,6 +120,7 @@ module.exports = grammar({
         $.transform_op,
         $.unique_by_op,
         $.join_op,
+        $.fill_null_op,
       ),
 
     rename_op: ($) => seq("rename", $.identifier, $.identifier),
@@ -128,7 +142,9 @@ module.exports = grammar({
     join_op: ($) =>
       seq("join", $.identifier, "on", $.column_ref, "==", $.column_ref),
 
-    // Column list: [.col1, .col2] or [col1, col2] (bare identifiers)
+    fill_null_op: ($) => seq("fillNull", $.literal),
+
+    // Column list: [col1, col2]
     column_list: ($) =>
       seq(
         "[",
@@ -171,11 +187,15 @@ module.exports = grammar({
     map_field_list: ($) =>
       seq($.map_field, repeat(seq(",", $.map_field)), optional(",")),
 
-    map_field: ($) => seq($.identifier, ":", $.map_expr),
+    map_field: ($) =>
+      choice(seq($.identifier, ":", $.map_expr), $.spread_operator),
 
-    // Map expressions
+    spread_operator: (_) => "...",
+
+    // Map expressions (with cast support)
     map_expr: ($) =>
       choice(
+        $.cast_expr,
         $.column_ref,
         $.literal,
         $.identifier,
@@ -187,6 +207,14 @@ module.exports = grammar({
         $.builtin_call,
         seq("(", $.map_expr, ")"),
       ),
+
+    // Cast: expr as Type
+    cast_expr: ($) => prec.left(3, seq($._castable_expr, "as", $._cast_target)),
+
+    _castable_expr: ($) =>
+      choice($.column_ref, $.literal, $.identifier, seq("(", $.map_expr, ")")),
+
+    _cast_target: ($) => choice($.simple_type, $.decimal_type),
 
     hash_expr: ($) => seq("hash", $.column_list),
 
@@ -214,35 +242,24 @@ module.exports = grammar({
         seq("stripPrefix", $.string),
         seq("stripSuffix", $.string),
         seq("replace", $.string, $.string),
-        seq("cast", $.simple_type),
       ),
 
-    // Main definition
-    main_definition: ($) => seq("main", "=", $.main_body),
-
-    main_body: ($) => repeat1($.main_step),
-
-    main_step: ($) => choice($.read_step, $.pipe_step, $.write_step),
-
-    read_step: ($) => seq("read", $.string, "as", $.type_identifier),
-
-    pipe_step: ($) => seq("|>", $.identifier),
-
-    write_step: ($) => seq(choice("write", "sink"), $.string),
+    // Top-level sink statement
+    sink_statement: ($) => seq("sink", $.string, $.identifier),
 
     // Literals
     literal: ($) => choice($.string, $.number, $.float, $.boolean),
 
     string: (_) => /"[^"]*"/,
 
-    number: (_) => /\d+/,
+    number: (_) => /-?\d+/,
 
-    float: (_) => /\d+\.\d+/,
+    float: (_) => /-?\d+\.\d+/,
 
     boolean: (_) => choice("True", "False"),
 
     // Identifiers
-    identifier: (_) => /[a-z][a-zA-Z0-9_]*/,
+    identifier: (_) => /[a-z_][a-zA-Z0-9_]*/,
 
     type_identifier: (_) => /[A-Z][a-zA-Z0-9]*/,
   },

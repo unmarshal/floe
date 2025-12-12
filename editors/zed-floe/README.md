@@ -10,12 +10,10 @@ Syntax highlighting for the Floe data pipeline DSL in the Zed editor.
    ```bash
    cd ../tree-sitter-floe
    npm install
-   npx tree-sitter generate
+   npm run build
    ```
 
-2. Update `extension.toml` to point to your local grammar repository or push to GitHub and update the repository URL.
-
-3. Install the extension in Zed:
+2. Install the extension in Zed:
    - Open Zed
    - Go to Extensions (Cmd+Shift+X)
    - Click "Install Dev Extension"
@@ -29,11 +27,12 @@ Once published, search for "floe" in the Zed extension marketplace.
 
 - Syntax highlighting for:
   - Schema definitions
-  - Pipeline bindings
+  - Pipeline bindings with type annotations
+  - Table bindings with transforms
   - Constants and column functions
   - Operations (rename, drop, filter, map, join, etc.)
   - Builtins (toLowercase, trim, stripPrefix, etc.)
-  - Types (String, Int, Float, Bool, Maybe, List, Decimal)
+  - Types (String, Int64, Float64, Bool, Maybe, List, Decimal)
   - Comments
 
 - Bracket matching
@@ -46,24 +45,22 @@ Files with the `.floe` extension are automatically recognized.
 ## Example
 
 ```floe
--- Schema definitions
-schema User {
-    id: String,
-    name: String,
-    age: Int,
+schema Order {
+    order_id: String,
+    customer_id: String,
+    amount: Decimal(10, 2),
 }
 
--- Pipeline with type annotation
-let transform : User -> CleanUser =
-    filter .age >= 18 >>
-    map {
-        user_id: .id,
-        status: if .age > 65 then "senior" else "adult"
-    }
+schema CleanOrder {
+    id: String,
+    amount: Decimal(10, 2),
+}
 
--- Entry point
-main =
-    read "input.parquet" as User
-    |> transform
-    sink "output.parquet"
+let clean : Order -> CleanOrder =
+    rename order_id id >>
+    drop [customer_id]
+
+let orders = read "orders.parquet" as Order |> clean
+
+sink "output.parquet" orders
 ```

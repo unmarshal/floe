@@ -50,7 +50,7 @@ floe/
 │       ├── Elaborate.idr  # Elaboration tests
 │       ├── Codegen.idr    # Code generation tests
 │       └── Runner.idr     # Test framework
-├── editors/               # Editor tooling (tree-sitter, Zed extension)
+├── editors/               # Editor tooling (see "Editor Support" section)
 ├── examples/
 │   ├── Basic.floe         # Basic operations (rename, drop, filter)
 │   ├── Builtins.floe      # String builtin examples
@@ -441,6 +441,33 @@ If `hasField` returns a proof, we construct the typed expression. Otherwise, we 
 4. **The output schema is accurate** - the claimed output type matches reality
 
 Bugs in elaboration logic are caught when *compiling the compiler*, not when users run pipelines.
+
+## Editor Support
+
+### Tree-sitter Grammar
+
+The tree-sitter grammar provides syntax highlighting for editors that support it.
+
+```bash
+cd editors/tree-sitter-floe
+npm install
+npm run build  # Runs: tree-sitter generate && tree-sitter build
+
+# Test parsing a file
+npx tree-sitter parse ../../tests/complex/Pipeline.floe
+```
+
+### Zed Extension
+
+To install the Floe extension in Zed:
+
+1. First build the tree-sitter grammar (see above)
+2. Open Zed
+3. Go to Extensions (Cmd+Shift+X)
+4. Click "Install Dev Extension"
+5. Select the `editors/zed-floe` directory
+
+The extension provides syntax highlighting for `.floe` files.
 
 ## TODO
 
