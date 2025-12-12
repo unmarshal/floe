@@ -1,0 +1,40 @@
+-- Test: Join against a table that has been transformed
+-- The join should see the OUTPUT schema of the transformed table, not the input schema
+
+schema RawCustomer {
+    customer_id: String,
+    full_name: String,
+}
+
+schema Customer {
+    id: String,
+    name: String,
+}
+
+schema Order {
+    order_id: String,
+    customer_id: String,
+}
+
+schema EnrichedOrder {
+    order_id: String,
+    customer_name: String,
+}
+
+-- Transform RawCustomer -> Customer (renames customer_id to id)
+let cleanCustomer : RawCustomer -> Customer =
+    rename customer_id id >>
+    rename full_name name
+
+-- Table binding with transform applied
+let customers = read "customers.parquet" as RawCustomer |> cleanCustomer
+
+-- Join should work because 'customers' has schema Customer with 'id' column
+-- (not RawCustomer with 'customer_id')
+let enrich : Order -> EnrichedOrder =
+    join customers on .customer_id == .id >>
+    map { order_id: .order_id, customer_name: .name }
+
+let result = read "orders.parquet" as Order |> enrich
+
+sink "output.parquet" result

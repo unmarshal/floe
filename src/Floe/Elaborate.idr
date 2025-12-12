@@ -932,18 +932,55 @@ getTableExprFile (STRead _ file _) = file
 getTableExprFile (STPipe _ inner _) = getTableExprFile inner
 getTableExprFile (STVar _ _) = ""  -- variable reference
 
-elabTableBinds : Context -> List STableBind -> Result Context
-elabTableBinds ctx [] = ok ctx
-elabTableBinds ctx (t :: rest) = do
-  -- Extract the schema from the table expression
+-- Compute the output schema of a table expression by following transforms
+-- Returns (inputSchema, outputSchema) where inputSchema is from the read clause
+-- and outputSchema is after all transforms are applied
+computeTableExprSchemas : Context -> Span -> STableExpr -> Result (Schema, Schema)
+computeTableExprSchemas ctx span (STRead _ file schemaName) =
+  case lookupSchema schemaName ctx of
+    Nothing => err (SchemaNotFound span schemaName)
+    Just schema => ok (schema, schema)  -- No transforms, input = output
+computeTableExprSchemas ctx span (STPipe _ inner fnName) = do
+  (inputSchema, currentSchema) <- computeTableExprSchemas ctx span inner
+  case lookupPipeline fnName ctx of
+    Nothing => err (ParseError span ("Transform '" ++ fnName ++ "' is not defined"))
+    Just (expectedIn, outputSchema) =>
+      -- TODO: Could verify currentSchema matches expectedIn
+      ok (inputSchema, outputSchema)
+computeTableExprSchemas ctx span (STVar _ name) =
+  case lookupTable name ctx of
+    Nothing => err (ParseError span ("Table '" ++ name ++ "' is not defined"))
+    Just (_, schema) => ok (schema, schema)
+
+-- Register table bindings with their BASE schema (from read clause)
+-- This runs early so pipelines can reference tables in joins
+-- Note: Tables that use transforms will have wrong schema until elabTableBinds runs
+registerTableBinds : Context -> List STableBind -> Result Context
+registerTableBinds ctx [] = ok ctx
+registerTableBinds ctx (t :: rest) = do
   case getTableExprSchema t.expr of
     Nothing =>
-      -- Variable reference - for now just skip validation (will be checked at use site)
-      elabTableBinds ctx rest
+      -- Variable reference - skip for now
+      registerTableBinds ctx rest
     Just schemaName =>
       case lookupSchema schemaName ctx of
         Nothing => err (SchemaNotFound t.span schemaName)
-        Just schema => elabTableBinds (addTable t.name (getTableExprFile t.expr) schema ctx) rest
+        Just schema => registerTableBinds (addTable t.name (getTableExprFile t.expr) schema ctx) rest
+
+-- Elaborate table bindings with their OUTPUT schema (after transforms)
+-- This computes the actual schema of the table after all transforms are applied
+-- Must run after pipelines are registered so we can look up transform output types
+elabTableBinds : Context -> List STableBind -> Result Context
+elabTableBinds ctx [] = ok ctx
+elabTableBinds ctx (t :: rest) = do
+  case getTableExprSchema t.expr of
+    Nothing =>
+      -- Variable reference - skip
+      elabTableBinds ctx rest
+    Just _ => do
+      (inputSchema, outputSchema) <- computeTableExprSchemas ctx t.span t.expr
+      -- Update table to use OUTPUT schema (overwriting the base schema)
+      elabTableBinds (addTable t.name (getTableExprFile t.expr) outputSchema ctx) rest
 
 validateTransforms : Context -> List STransformDef -> Result ()
 validateTransforms ctx [] = ok ()
@@ -951,6 +988,28 @@ validateTransforms ctx (t :: rest) = do
   _ <- elabTransformDef ctx t
   validateTransforms ctx rest
 
+-- Register let bindings (legacy syntax) - just add to context without full validation
+-- This allows table bindings to look up pipeline output schemas
+registerLetBinds : Context -> List STypeSig -> List SLetBind -> Result Context
+registerLetBinds ctx sigs [] = ok ctx
+registerLetBinds ctx sigs (b :: rest) = do
+  -- Find the type signature
+  case findSig b.name sigs of
+    Nothing => err (ParseError b.span ("No type signature for '" ++ b.name ++ "'"))
+    Just sig => do
+      sIn <- case lookupSchema sig.inTy ctx of
+        Nothing => err (SchemaNotFound b.span sig.inTy)
+        Just s => ok s
+      sOut <- case lookupSchema sig.outTy ctx of
+        Nothing => err (SchemaNotFound b.span sig.outTy)
+        Just s => ok s
+      registerLetBinds (addPipeline b.name sIn sOut ctx) sigs rest
+  where
+    findSig : String -> List STypeSig -> Maybe STypeSig
+    findSig _ [] = Nothing
+    findSig nm (s :: ss) = if s.name == nm then Just s else findSig nm ss
+
+-- Validate let bindings (legacy syntax) - full elaboration
 validateLetBinds : Context -> List STypeSig -> List SLetBind -> Result Context
 validateLetBinds ctx sigs [] = ok ctx
 validateLetBinds ctx sigs (b :: rest) = do
@@ -1036,6 +1095,27 @@ elabBindings ctx (b :: rest) =
                _ => ctx
   in elabBindings ctx' rest
 
+-- Register pipeline binding (new syntax) - just add to context without full validation
+registerPipelineBinding : Context -> SBinding -> Result Context
+registerPipelineBinding ctx b =
+  case (b.ty, b.val) of
+    (SBTyPipeline inName outName, SBValPipeline _) => do
+      sIn <- case lookupSchema inName ctx of
+        Nothing => err (SchemaNotFound b.span inName)
+        Just s => ok s
+      sOut <- case lookupSchema outName ctx of
+        Nothing => err (SchemaNotFound b.span outName)
+        Just s => ok s
+      ok (addPipeline b.name sIn sOut ctx)
+    _ => ok ctx  -- Not a pipeline binding, skip
+
+-- Register all pipeline bindings (new syntax)
+registerPipelineBindings : Context -> List SBinding -> Result Context
+registerPipelineBindings ctx [] = ok ctx
+registerPipelineBindings ctx (b :: rest) = do
+  ctx' <- registerPipelineBinding ctx b
+  registerPipelineBindings ctx' rest
+
 -- Validate and register pipeline bindings (new syntax)
 validatePipelineBinding : Context -> SBinding -> Result Context
 validatePipelineBinding ctx b =
@@ -1094,16 +1174,22 @@ elabProgram prog = do
   let ctx = elabConstants ctx (getConsts prog)
   -- Fourth pass: register bindings from new syntax (constants + column functions)
   let ctx = elabBindings ctx (getBindings prog)
-  -- Fifth pass: elaborate table bindings
-  ctx <- elabTableBinds ctx (getTableBinds prog)
+  -- Fifth pass: register table bindings with BASE schema (so joins can find them)
+  ctx <- registerTableBinds ctx (getTableBinds prog)
   -- Sixth pass: elaborate transforms (just validate for now)
   validateTransforms ctx (getTransforms prog)
-  -- Seventh pass: elaborate let bindings (legacy syntax) and register pipelines
-  ctx <- validateLetBinds ctx (getTypeSigs prog) (getLetBinds prog)
-  -- Eighth pass: validate column function bindings (new syntax)
+  -- Seventh pass: register let bindings (legacy syntax) - just add to context
+  ctx <- registerLetBinds ctx (getTypeSigs prog) (getLetBinds prog)
+  -- Eighth pass: register pipeline bindings (new syntax) - just add to context
+  ctx <- registerPipelineBindings ctx (getBindings prog)
+  -- Ninth pass: update table bindings with OUTPUT schema (now that pipelines are registered)
+  ctx <- elabTableBinds ctx (getTableBinds prog)
+  -- Tenth pass: validate column function bindings (new syntax)
   validateColFnBindings (getBindings prog)
-  -- Ninth pass: validate pipeline bindings (new syntax) and register them
+  -- Eleventh pass: validate let bindings (legacy syntax) - full elaboration with joins
+  ctx <- validateLetBinds ctx (getTypeSigs prog) (getLetBinds prog)
+  -- Twelfth pass: validate pipeline bindings (new syntax) - full elaboration with joins
   ctx <- validatePipelineBindings ctx (getBindings prog)
-  -- Tenth pass: validate main entry point
+  -- Thirteenth pass: validate main entry point
   validateMain ctx (getMain prog)
   ok ctx
