@@ -1,0 +1,27 @@
+-- Test newtype definitions and usage
+-- Newtypes provide type-safe wrappers around base types
+
+-- Define newtypes for different ID types
+newtype CustomerId = String
+newtype OrderId = String
+
+schema Order {
+    order_id: OrderId,
+    customer_id: CustomerId,
+    amount: Int64,
+}
+
+schema FilteredOrder {
+    order_id: OrderId,
+    customer_id: CustomerId,
+    amount: Int64,
+}
+
+-- Test: filter with newtype column compared to string literal
+-- This should work because literals coerce to the base type
+let filterByCustomer : Order -> FilteredOrder =
+    filter .customer_id == "CUST001"
+
+let result = read "orders.parquet" as Order |> filterByCustomer
+
+sink "output.parquet" result

@@ -140,12 +140,12 @@ testCodegenMapHash : TestResult
 testCodegenMapHash =
   let src = """
 schema A { a: String, b: String, }
-schema B { id: String, }
+schema B { id: UInt64, }
 let t : A -> B = map { id: hash [.a, .b] }
 """
   in case generateCode src of
        Right code =>
-         if codeContains "concat_str" code && codeContains ".hash()" code
+         if codeContains "pl.struct" code && codeContains ".hash()" code
            then pass "codegen map hash"
            else fail "codegen map hash" ("Missing hash: " ++ code)
        Left e => fail "codegen map hash" e

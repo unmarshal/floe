@@ -47,6 +47,7 @@ tyToTypeFamily TString = "string"
 tyToTypeFamily TBool = "bool"
 tyToTypeFamily (TList t) = "list"
 tyToTypeFamily (TMaybe t) = "maybe:" ++ tyToTypeFamily t  -- Track nullability for validation
+tyToTypeFamily (TNewtype _ base) = tyToTypeFamily base    -- Newtypes erase to base type
 
 -- Generate schema dict for validation (type family based)
 public export
@@ -92,6 +93,7 @@ tyToPolars TBool = "Boolean"
 tyToPolars (TDecimal p s) = "Decimal(precision=" ++ show p ++ ", scale=" ++ show s ++ ")"
 tyToPolars (TList inner) = "List(" ++ tyToPolars inner ++ ")"
 tyToPolars (TMaybe inner) = tyToPolars inner  -- Polars handles nullability separately
+tyToPolars (TNewtype _ base) = tyToPolars base  -- Newtypes erase to base type
 
 -----------------------------------------------------------
 -- Builtin to Polars method call (must be before map helpers)
@@ -157,6 +159,7 @@ builtinToPolarsWithConsts _ (BCast ty) = ".cast(pl." ++ styToPolars ty ++ ")"
     styToPolars (SDecimal p s) = "Decimal(precision=" ++ show p ++ ", scale=" ++ show s ++ ")"
     styToPolars (SList inner) = "List(" ++ styToPolars inner ++ ")"
     styToPolars (SMaybe inner) = styToPolars inner  -- Polars handles nullability separately
+    styToPolars (SNewtype name) = "Utf8"  -- Newtypes erase to base type (resolved at elaboration)
 
 -- Backwards compatible version without constants
 builtinToPolars : BuiltinCall -> String
@@ -198,6 +201,7 @@ tBuiltinToPolarsWithConsts _ (TCast target) = ".cast(pl." ++ tyToPolars target +
     tyToPolars (TDecimal p s) = "Decimal(precision=" ++ show p ++ ", scale=" ++ show s ++ ")"
     tyToPolars (TList inner) = "List(" ++ tyToPolars inner ++ ")"
     tyToPolars (TMaybe inner) = tyToPolars inner  -- Polars handles nullability separately
+    tyToPolars (TNewtype _ base) = tyToPolars base  -- Newtypes erase to base type
 
 -- Generate chained method calls from a typed builtin chain
 tChainToPolarsWithConsts : List (String, ConstValue) -> TBuiltinChain i o -> String -> String
@@ -246,6 +250,9 @@ filterExprToPolars (FCompareInt col op val _) =
   "pl.col(\"" ++ col ++ "\") " ++ cmpOpToPolars op ++ " " ++ show val
 filterExprToPolars (FCompareIntMaybe col op val _) =
   -- Same codegen as FCompareInt - Polars handles nulls automatically
+  "pl.col(\"" ++ col ++ "\") " ++ cmpOpToPolars op ++ " " ++ show val
+filterExprToPolars (FCompareIntGeneral col op val _ _) =
+  -- General integer comparison - works with newtypes that wrap integers
   "pl.col(\"" ++ col ++ "\") " ++ cmpOpToPolars op ++ " " ++ show val
 filterExprToPolars (FCompareConst col op constName _ _) =
   "pl.col(\"" ++ col ++ "\") " ++ cmpOpToPolars op ++ " " ++ constName

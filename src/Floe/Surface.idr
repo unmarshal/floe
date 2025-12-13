@@ -26,6 +26,7 @@ data STy
   | SBool
   | SList STy
   | SMaybe STy
+  | SNewtype String   -- reference to a newtype by name
 
 public export
 Show STy where
@@ -44,6 +45,7 @@ Show STy where
   show SBool = "Bool"
   show (SList t) = "List " ++ show t
   show (SMaybe t) = "Maybe " ++ show t
+  show (SNewtype name) = name
 
 public export
 Eq STy where
@@ -62,6 +64,7 @@ Eq STy where
   SBool == SBool = True
   (SList t1) == (SList t2) = t1 == t2
   (SMaybe t1) == (SMaybe t2) = t1 == t2
+  (SNewtype n1) == (SNewtype n2) = n1 == n2
   _ == _ = False
 
 -- Convert surface type to core type
@@ -82,6 +85,8 @@ toCoreTy SString = TString
 toCoreTy SBool = TBool
 toCoreTy (SList t) = TList (toCoreTy t)
 toCoreTy (SMaybe t) = TMaybe (toCoreTy t)
+-- Newtypes require context lookup; this placeholder is replaced during elaboration
+toCoreTy (SNewtype name) = TNewtype name TString  -- placeholder, actual base resolved in elaboration
 
 -- Column definition in surface syntax
 public export
@@ -98,6 +103,14 @@ record SSchema where
   span : Span
   name : String
   cols : List SCol
+
+-- Newtype definition: newtype CustomerId = String
+public export
+record SNewtypeDef where
+  constructor MkSNewtypeDef
+  span : Span
+  name : String    -- the newtype name (e.g., "CustomerId")
+  baseTy : STy     -- the underlying type (e.g., SString)
 
 -----------------------------------------------------------
 -- Builtin Calls (must be before SExpr which uses them)
@@ -507,6 +520,7 @@ record STableBind where
 public export
 data STopLevel
   = STLSchema SSchema
+  | STLNewtype SNewtypeDef       -- newtype CustomerId = String
   | STLBinding SBinding          -- let name : type = value (unified binding)
   | STLTableBind STableBind      -- let name = read "file" as Schema
   | STLSink Span String STableExpr (Maybe SExpr)  -- sink "file" tableExpr [partitionBy expr]
@@ -532,6 +546,16 @@ getSchemas prog = go prog.items
     go : List STopLevel -> List SSchema
     go [] = []
     go (STLSchema s :: rest) = s :: go rest
+    go (_ :: rest) = go rest
+
+-- Helper to extract newtype definitions
+public export
+getNewtypes : SProgram -> List SNewtypeDef
+getNewtypes prog = go prog.items
+  where
+    go : List STopLevel -> List SNewtypeDef
+    go [] = []
+    go (STLNewtype n :: rest) = n :: go rest
     go (_ :: rest) = go rest
 
 -- Helper to extract type signatures

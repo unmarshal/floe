@@ -25,6 +25,7 @@ data Ty
   | TBool
   | TList Ty
   | TMaybe Ty
+  | TNewtype String Ty  -- name, base type (e.g., TNewtype "CustomerId" TString)
 
 public export
 Eq Ty where
@@ -43,6 +44,7 @@ Eq Ty where
   TBool == TBool = True
   TList a == TList b = a == b
   TMaybe a == TMaybe b = a == b
+  TNewtype n1 t1 == TNewtype n2 t2 = n1 == n2 && t1 == t2
   _ == _ = False
 
 public export
@@ -62,6 +64,7 @@ Show Ty where
   show TBool = "Bool"
   show (TList t) = "List " ++ show t
   show (TMaybe t) = "Maybe " ++ show t
+  show (TNewtype name _) = name  -- Show just the newtype name
 
 -- DecEq for Ty - use Eq to simplify inequality cases
 public export
@@ -88,6 +91,10 @@ DecEq Ty where
   decEq (TMaybe a) (TMaybe b) = case decEq a b of
     Yes Refl => Yes Refl
     No contra => No $ \Refl => contra Refl
+  decEq (TNewtype n1 t1) (TNewtype n2 t2) = case (decEq n1 n2, decEq t1 t2) of
+    (Yes Refl, Yes Refl) => Yes Refl
+    (No contra, _) => No $ \Refl => contra Refl
+    (_, No contra) => No $ \Refl => contra Refl
   -- Inequality cases - primitives vs each other
   decEq TInt8 TInt16 = No $ \Refl impossible
   decEq TInt8 TInt32 = No $ \Refl impossible
@@ -299,6 +306,38 @@ DecEq Ty where
   decEq (TMaybe _) TString = No $ \Refl impossible
   decEq (TMaybe _) TBool = No $ \Refl impossible
   decEq (TMaybe _) (TList _) = No $ \Refl impossible
+  decEq (TMaybe _) (TNewtype _ _) = No $ \Refl impossible
+  -- TNewtype vs all other types
+  decEq (TNewtype _ _) TInt8 = No $ \Refl impossible
+  decEq (TNewtype _ _) TInt16 = No $ \Refl impossible
+  decEq (TNewtype _ _) TInt32 = No $ \Refl impossible
+  decEq (TNewtype _ _) TInt64 = No $ \Refl impossible
+  decEq (TNewtype _ _) TUInt8 = No $ \Refl impossible
+  decEq (TNewtype _ _) TUInt16 = No $ \Refl impossible
+  decEq (TNewtype _ _) TUInt32 = No $ \Refl impossible
+  decEq (TNewtype _ _) TUInt64 = No $ \Refl impossible
+  decEq (TNewtype _ _) TFloat32 = No $ \Refl impossible
+  decEq (TNewtype _ _) TFloat64 = No $ \Refl impossible
+  decEq (TNewtype _ _) (TDecimal _ _) = No $ \Refl impossible
+  decEq (TNewtype _ _) TString = No $ \Refl impossible
+  decEq (TNewtype _ _) TBool = No $ \Refl impossible
+  decEq (TNewtype _ _) (TList _) = No $ \Refl impossible
+  decEq (TNewtype _ _) (TMaybe _) = No $ \Refl impossible
+  -- All other types vs TNewtype
+  decEq TInt8 (TNewtype _ _) = No $ \Refl impossible
+  decEq TInt16 (TNewtype _ _) = No $ \Refl impossible
+  decEq TInt32 (TNewtype _ _) = No $ \Refl impossible
+  decEq TInt64 (TNewtype _ _) = No $ \Refl impossible
+  decEq TUInt8 (TNewtype _ _) = No $ \Refl impossible
+  decEq TUInt16 (TNewtype _ _) = No $ \Refl impossible
+  decEq TUInt32 (TNewtype _ _) = No $ \Refl impossible
+  decEq TUInt64 (TNewtype _ _) = No $ \Refl impossible
+  decEq TFloat32 (TNewtype _ _) = No $ \Refl impossible
+  decEq TFloat64 (TNewtype _ _) = No $ \Refl impossible
+  decEq (TDecimal _ _) (TNewtype _ _) = No $ \Refl impossible
+  decEq TString (TNewtype _ _) = No $ \Refl impossible
+  decEq TBool (TNewtype _ _) = No $ \Refl impossible
+  decEq (TList _) (TNewtype _ _) = No $ \Refl impossible
 
 -----------------------------------------------------------
 -- Schema
@@ -367,14 +406,59 @@ dummySpan : Span
 dummySpan = MkSpan 0 0 0 0
 
 -----------------------------------------------------------
+-- Newtype helpers
+-----------------------------------------------------------
+
+-- Get the base type of a type (unwraps newtypes recursively through all type constructors)
+public export
+baseType : Ty -> Ty
+baseType (TNewtype _ base) = baseType base  -- unwrap newtypes
+baseType (TMaybe inner) = TMaybe (baseType inner)  -- recurse into Maybe
+baseType (TList inner) = TList (baseType inner)  -- recurse into List
+baseType t = t
+
+-- Check if two types are compatible for column-to-column comparison
+-- Newtypes must match exactly (CustomerId != Email even if both wrap String)
+public export
+typesMatch : Ty -> Ty -> Bool
+typesMatch t1 t2 = t1 == t2
+
+-- Check if a literal type is compatible with a column type
+-- Literals can coerce to the base type of a newtype
+public export
+literalCompatible : (colTy : Ty) -> (litTy : Ty) -> Bool
+literalCompatible colTy litTy = baseType colTy == litTy
+
+-- Apply a type transformation to a column type, preserving newtype wrappers
+-- E.g., transformType (Maybe AuthorId) String = AuthorId (unwraps Maybe, keeps newtype)
+-- E.g., transformType (Maybe String) String = String
+-- Used by transform to compute output types
+public export
+transformType : (colTy : Ty) -> (fnOutTy : Ty) -> Ty
+transformType (TNewtype name inner) fnOutTy = TNewtype name (transformType inner fnOutTy)
+transformType (TMaybe inner) fnOutTy =
+  -- If function output is not Maybe but input was Maybe, unwrap the Maybe from inner
+  case fnOutTy of
+    TMaybe _ => TMaybe (transformType inner fnOutTy)
+    _ => transformType inner fnOutTy
+transformType _ fnOutTy = fnOutTy
+
+-- Check if a column type is compatible with a function input type (for transform)
+-- Column type's base type must match function input type
+public export
+transformCompatible : (colTy : Ty) -> (fnInTy : Ty) -> Bool
+transformCompatible colTy fnInTy = baseType colTy == fnInTy
+
+-----------------------------------------------------------
 -- Schema manipulation helpers
 -----------------------------------------------------------
 
 -- Update the types of specified columns in a schema
+-- Uses transformType to preserve newtype wrappers
 public export
 updateColTypes : Schema -> List String -> Ty -> Schema
 updateColTypes [] _ _ = []
 updateColTypes (MkCol name ty :: rest) cols newTy =
   if name `elem` cols
-    then MkCol name newTy :: updateColTypes rest cols newTy
+    then MkCol name (transformType ty newTy) :: updateColTypes rest cols newTy
     else MkCol name ty :: updateColTypes rest cols newTy

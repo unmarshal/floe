@@ -1,0 +1,22 @@
+-- Test: comparing a newtype to a literal of the wrong base type should fail
+-- CustomerId wraps String, so comparing to an integer should error
+
+newtype CustomerId = String
+
+schema Order {
+    customer_id: CustomerId,
+    amount: Int64,
+}
+
+schema BadFilter {
+    customer_id: CustomerId,
+    amount: Int64,
+}
+
+-- ERROR: CustomerId wraps String, but we're comparing to an integer
+let badFilter : Order -> BadFilter =
+    filter .customer_id == 123
+
+let result = read "orders.parquet" as Order |> badFilter
+
+sink "output.parquet" result

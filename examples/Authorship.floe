@@ -11,22 +11,26 @@ Outputs:
   - AFFILIATION_WITH.parquet: source_id (authorship), target_id (org) - requires join
 -}
 
+-- Type-safe ID wrappers to prevent mixing different entity IDs
+newtype PublicationId = String
+newtype AuthorId = String
+newtype OrganizationId = String
 
 -- Input schema (after CSV->Parquet conversion, raw_affiliation_strings is JSON)
 schema WorkAuthorship {
-    work_id: String,
+    work_id: PublicationId,
     author_position: String,
-    author_id: Maybe String,
-    institution_id: Maybe String,
+    author_id: Maybe AuthorId,
+    institution_id: Maybe OrganizationId,
     raw_affiliation_strings: String,
 }
 
 -- After initial transforms: renamed columns, stripped prefixes, nulls filled, with authorship_id
 schema TransformedAuthorship {
-    publication_id: String,
+    publication_id: PublicationId,
     author_position: String,
-    author_id: String,
-    affiliated_organization_id: String,
+    author_id: AuthorId,
+    affiliated_organization_id: OrganizationId,
     raw_affiliation_strings: String,
     authorship_id: UInt64,
 }
@@ -39,7 +43,7 @@ schema AuthorshipNode {
 
 -- CONTRIBUTOR_TO edge schema (author -> authorship)
 schema ContributorTo {
-    source_id: String,
+    source_id: AuthorId,
     target_id: UInt64,
     author_position: String,
 }
@@ -47,19 +51,19 @@ schema ContributorTo {
 -- AUTHOR_OF edge schema (authorship -> publication)
 schema AuthorOf {
     source_id: UInt64,
-    target_id: String,
+    target_id: PublicationId,
 }
 
 -- AFFILIATION_WITH edge schema (authorship -> organization)
 schema AffiliationWith {
     source_id: UInt64,
-    target_id: String,
+    target_id: OrganizationId,
 }
 
 -- Organization lookup table schema
 schema OrgNode {
-    id: String,
-    source_id: String,
+    id: OrganizationId,
+    source_id: OrganizationId,
 }
 
 -- Strip OpenAlex URL prefix

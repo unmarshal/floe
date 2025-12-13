@@ -29,10 +29,11 @@ record Context where
   scalarFns : List (String, ScalarFn)  -- scalar functions with typed chains
   constants : List (String, ConstValue)  -- typed constants
   pipelines : List (String, Schema, Schema)  -- pipeline bindings: (name, inSchema, outSchema)
+  newtypes : List (String, Ty)  -- newtype definitions: (name, base type)
 
 public export
 emptyCtx : Context
-emptyCtx = MkCtx [] [] [] [] []
+emptyCtx = MkCtx [] [] [] [] [] []
 
 public export
 addSchema : String -> Schema -> Context -> Context
@@ -81,6 +82,37 @@ lookupPipeline nm ctx = lookup nm ctx.pipelines
 public export
 addPipeline : String -> Schema -> Schema -> Context -> Context
 addPipeline nm sIn sOut ctx = { pipelines := (nm, sIn, sOut) :: ctx.pipelines } ctx
+
+public export
+addNewtype : String -> Ty -> Context -> Context
+addNewtype nm baseTy ctx = { newtypes := (nm, baseTy) :: ctx.newtypes } ctx
+
+public export
+lookupNewtype : String -> Context -> Maybe Ty
+lookupNewtype nm ctx = lookup nm ctx.newtypes
+
+-- Convert surface type to core type with context (for resolving newtype references)
+public export
+toCoreTyWithCtx : Context -> STy -> Maybe Ty
+toCoreTyWithCtx ctx SInt8 = Just TInt8
+toCoreTyWithCtx ctx SInt16 = Just TInt16
+toCoreTyWithCtx ctx SInt32 = Just TInt32
+toCoreTyWithCtx ctx SInt64 = Just TInt64
+toCoreTyWithCtx ctx SUInt8 = Just TUInt8
+toCoreTyWithCtx ctx SUInt16 = Just TUInt16
+toCoreTyWithCtx ctx SUInt32 = Just TUInt32
+toCoreTyWithCtx ctx SUInt64 = Just TUInt64
+toCoreTyWithCtx ctx SFloat32 = Just TFloat32
+toCoreTyWithCtx ctx SFloat64 = Just TFloat64
+toCoreTyWithCtx ctx (SDecimal p s) = Just (TDecimal p s)
+toCoreTyWithCtx ctx SString = Just TString
+toCoreTyWithCtx ctx SBool = Just TBool
+toCoreTyWithCtx ctx (SList t) = map TList (toCoreTyWithCtx ctx t)
+toCoreTyWithCtx ctx (SMaybe t) = map TMaybe (toCoreTyWithCtx ctx t)
+toCoreTyWithCtx ctx (SNewtype name) =
+  case lookupNewtype name ctx of
+    Just baseTy => Just (TNewtype name baseTy)
+    Nothing => Nothing  -- Unknown newtype
 
 -----------------------------------------------------------
 -- Parse Type Names
@@ -144,18 +176,19 @@ validateCols span s (n :: ns) =
     then validateCols span s ns
     else err (ColNotFound span n s)
 
--- Unified validation + proof construction for typed columns
-ensureAllColsTy : Span -> (s : Schema) -> (nms : List String) -> (t : Ty) -> Result (AllHasColTy s nms t)
-ensureAllColsTy span s [] t = ok AllTyNil
+-- Unified validation + proof construction for typed columns (base type matching)
+-- Allows newtypes: column Maybe AuthorId matches base type Maybe String
+ensureAllColsTy : Span -> (s : Schema) -> (nms : List String) -> (t : Ty) -> Result (AllHasColBaseTy s nms t)
+ensureAllColsTy span s [] t = ok AllBaseTyNil
 ensureAllColsTy span s (nm :: nms) t =
-  case findColWithTy s nm t of
-    Just prf => do
-      rest <- ensureAllColsTy span s nms t
-      ok (AllTyCons prf rest)
-    Nothing =>
-      case findCol s nm of
-        Nothing => err (ColNotFound span nm s)
-        Just (MkColProof actualTy _) => err (ParseError span ("Column '" ++ nm ++ "' has type " ++ show actualTy ++ ", expected " ++ show t))
+  case findCol s nm of
+    Nothing => err (ColNotFound span nm s)
+    Just (MkColProof actualTy prf) =>
+      if baseType actualTy == t
+        then do
+          rest <- ensureAllColsTy span s nms t
+          ok (AllBaseTyCons prf rest)
+        else err (ParseError span ("Column '" ++ nm ++ "' has type " ++ show actualTy ++ ", expected " ++ show t))
 
 -- Unified validation + proof construction for Maybe columns
 ensureAllMaybeCols : Span -> (s : Schema) -> (nms : List String) -> Result (AllHasMaybeCol s nms)
@@ -541,12 +574,19 @@ elabFilterExpr ctx span s expr =
             Nothing => err (ParseError span ("Column '" ++ col2 ++ "' must have same type as '" ++ col1 ++ "'"))
             Just prf2 => ok (FCompareCols col1 op col2 prf1 prf2)
     Just (SColRef _ col, op, SIntLit _ val) =>
-      -- .col op integer (try Int64 first, then Maybe Int64)
+      -- .col op integer (try Int64 first, then Maybe Int64, then newtypes wrapping Int64)
       case findColWithTy s col TInt64 of
         Just prf => ok (FCompareInt col op val prf)
         Nothing => case findColWithTy s col (TMaybe TInt64) of
           Just prf => ok (FCompareIntMaybe col op val prf)
-          Nothing => err (ParseError span ("Column '" ++ col ++ "' must be Int64 or Maybe Int64 for integer comparison"))
+          Nothing =>
+            -- Check for newtype wrapping Int64
+            case findCol s col of
+              Nothing => err (ColNotFound span col s)
+              Just (MkColProof colTy prf) =>
+                if baseType colTy == TInt64
+                  then ok (FCompareIntGeneral col op val colTy prf)  -- newtype wrapping Int64
+                  else err (ParseError span ("Column '" ++ col ++ "' must be Int64 or Maybe Int64 for integer comparison, got " ++ show colTy))
     Just (SColRef _ col, op, SStrLit _ val) =>
       -- .col op "string"
       case findCol s col of
@@ -560,9 +600,14 @@ elabFilterExpr ctx span s expr =
           let constTy = constValueTy constVal
           in case findColWithTy s col constTy of
                Just prf => ok (FCompareConst col op constName constTy prf)
-               Nothing => case getColTy s col of
-                 Nothing => err (ColNotFound span col s)
-                 Just colTy => err (ParseError span ("Column '" ++ col ++ "' has type " ++ show colTy ++ " but constant '" ++ constName ++ "' has type " ++ show constTy))
+               Nothing =>
+                 -- Check for newtype column with matching base type
+                 case findCol s col of
+                   Nothing => err (ColNotFound span col s)
+                   Just (MkColProof colTy prf) =>
+                     if baseType colTy == constTy
+                       then ok (FCompareConst col op constName colTy prf)  -- newtype with matching base
+                       else err (ParseError span ("Column '" ++ col ++ "' has type " ++ show colTy ++ " but constant '" ++ constName ++ "' has type " ++ show constTy))
     Just _ => err (ParseError span "Unsupported comparison expression")
     Nothing => err (ParseError span "Invalid filter expression")
 
@@ -577,6 +622,7 @@ filterExprCols (FCompareCol col _ _ _) = [col]
 filterExprCols (FCompareCols col1 _ col2 _ _) = [col1, col2]
 filterExprCols (FCompareInt col _ _ _) = [col]
 filterExprCols (FCompareIntMaybe col _ _ _) = [col]
+filterExprCols (FCompareIntGeneral col _ _ _ _) = [col]
 filterExprCols (FCompareConst col _ _ _ _) = [col]
 filterExprCols (FAnd l r) = filterExprCols l ++ filterExprCols r
 filterExprCols (FOr l r) = filterExprCols l ++ filterExprCols r
@@ -936,6 +982,19 @@ elabSchemas ctx (s :: rest) = do
     Just _ => err (DuplicateSchema s.span nm)
     Nothing => elabSchemas (addSchema nm schema ctx) rest
 
+-- Elaborate newtype definitions
+elabNewtypes : Context -> List SNewtypeDef -> Result Context
+elabNewtypes ctx [] = ok ctx
+elabNewtypes ctx (n :: rest) = do
+  -- Convert base type to core type (with context for nested newtypes)
+  case toCoreTyWithCtx ctx n.baseTy of
+    Nothing => err (ParseError n.span ("Unknown type in newtype definition: " ++ show n.baseTy))
+    Just baseTy =>
+      -- Check for duplicate newtype names
+      case lookupNewtype n.name ctx of
+        Just _ => err (ParseError n.span ("Duplicate newtype definition: " ++ n.name))
+        Nothing => elabNewtypes (addNewtype n.name baseTy ctx) rest
+
 -- Register constants in context
 elabConstants : Context -> List (String, ConstValue) -> Context
 elabConstants ctx [] = ctx
@@ -1226,7 +1285,9 @@ elabProgram : SProgram -> Result Context
 elabProgram prog = do
   -- First pass: elaborate all schema definitions
   ctx <- elabSchemas emptyCtx (getSchemas prog)
-  -- Second pass: register scalar function types (legacy syntax)
+  -- Second pass: elaborate newtype definitions
+  ctx <- elabNewtypes ctx (getNewtypes prog)
+  -- Third pass: register scalar function types (legacy syntax)
   let ctx = elabScalarFnSigs ctx (getTypeSigs prog)
   -- Third pass: register constants (legacy syntax)
   let ctx = elabConstants ctx (getConsts prog)

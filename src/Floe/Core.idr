@@ -30,6 +30,13 @@ data AllHasColTy : Schema -> List String -> Ty -> Type where
   AllTyNil  : AllHasColTy s [] t
   AllTyCons : HasCol s nm t -> AllHasColTy s nms t -> AllHasColTy s (nm :: nms) t
 
+-- AllHasColBaseTy s nms t = proof that all columns in nms have base type t
+-- This allows newtypes: column Maybe AuthorId matches base type Maybe String
+public export
+data AllHasColBaseTy : Schema -> List String -> Ty -> Type where
+  AllBaseTyNil  : AllHasColBaseTy s [] t
+  AllBaseTyCons : {0 actualTy : Ty} -> HasCol s nm actualTy -> AllHasColBaseTy s nms t -> AllHasColBaseTy s (nm :: nms) t
+
 -- AllHasMaybeCol s nms = proof that all columns in nms have Maybe type
 public export
 data AllHasMaybeCol : Schema -> List String -> Type where
@@ -105,6 +112,9 @@ data FilterExpr : Schema -> Type where
   -- Comparison with integer literal (nullable column)
   FCompareIntMaybe : (col : String) -> (op : CmpOp) -> (val : Integer)
               -> (0 prf : HasCol s col (TMaybe TInt64)) -> FilterExpr s
+  -- Comparison with integer literal (any integer-compatible type, including newtypes)
+  FCompareIntGeneral : (col : String) -> (op : CmpOp) -> (val : Integer) -> (colTy : Ty)
+              -> (0 prf : HasCol s col colTy) -> FilterExpr s
   -- Comparison with a constant reference (for typed constants like maxAge)
   FCompareConst : (col : String) -> (op : CmpOp) -> (constName : String) -> (constTy : Ty)
                -> (0 prf : HasCol s col constTy) -> FilterExpr s
@@ -385,14 +395,15 @@ data Pipeline : Schema -> Schema -> Type where
             -> Pipeline sIn sOut
 
   -- Transform: apply a function to specified columns
-  -- Proof that all columns have the expected input type
-  -- Output schema has transformed columns updated to fnOutTy
+  -- Proof that all columns have base type matching the function input type
+  -- (allows newtypes: Maybe AuthorId matches base type Maybe String)
+  -- Output schema has transformed columns updated via transformType (preserves newtypes)
   -- The typed builtin chain is now embedded directly (not just function name)
   Transform : (cols : List String)
             -> (chain : TBuiltinChain fnInTy fnOutTy)
             -> (fnInTy : Ty)
             -> (fnOutTy : Ty)
-            -> (0 prf : AllHasColTy sIn cols fnInTy)
+            -> (0 prf : AllHasColBaseTy sIn cols fnInTy)
             -> Pipeline (updateColTypes sIn cols fnOutTy) sOut
             -> Pipeline sIn sOut
 

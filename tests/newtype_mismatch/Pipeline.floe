@@ -1,0 +1,23 @@
+-- Test: comparing two different newtypes should fail
+-- Even though both wrap String, CustomerId != OrderId
+
+newtype CustomerId = String
+newtype OrderId = String
+
+schema Order {
+    order_id: OrderId,
+    customer_id: CustomerId,
+}
+
+schema BadFilter {
+    order_id: OrderId,
+    customer_id: CustomerId,
+}
+
+-- ERROR: This should fail - comparing CustomerId to OrderId
+let badFilter : Order -> BadFilter =
+    filter .customer_id == .order_id
+
+let result = read "orders.parquet" as Order |> badFilter
+
+sink "output.parquet" result

@@ -17,6 +17,7 @@ import Data.String
 public export
 data Token
   = TSchema
+  | TNewtype   -- newtype keyword
   | TLet
 
   | TRead          -- read
@@ -73,6 +74,7 @@ data Token
 public export
 Show Token where
   show TSchema = "schema"
+  show TNewtype = "newtype"
   show TLet = "let"
 
   show TRead = "read"
@@ -129,6 +131,7 @@ Show Token where
 public export
 Eq Token where
   TSchema == TSchema = True
+  TNewtype == TNewtype = True
   TLet == TLet = True
 
   TRead == TRead = True
@@ -326,6 +329,7 @@ lexNumber st =
 
 keyword : String -> Token
 keyword "schema" = TSchema
+keyword "newtype" = TNewtype
 keyword "let" = TLet
 
 keyword "read" = TRead
@@ -574,7 +578,8 @@ mutual
       "Maybe"  => do
         (inner, st'') <- pType st'
         Right (SMaybe inner, st'')
-      _ => Left (ParseError (currentTok st).span ("Unknown type: " ++ name))
+      -- Unknown identifier - treat as a newtype reference
+      _ => Right (SNewtype name, st')
 
 -----------------------------------------------------------
 -- Schema Parser
@@ -598,6 +603,20 @@ pSchema st = do
   (cols, st) <- pMany pCol st
   ((), st) <- expect TRBrace st
   Right (MkSSchema sp name cols, st)
+
+-----------------------------------------------------------
+-- Newtype Parser
+-----------------------------------------------------------
+
+-- Parse: newtype CustomerId = String
+pNewtypeDef : Parser SNewtypeDef
+pNewtypeDef st = do
+  (sp, st) <- pSpan st
+  ((), st) <- expect TNewtype st
+  (name, st) <- pIdent st
+  ((), st) <- expect TEquals st
+  (baseTy, st) <- pType st
+  Right (MkSNewtypeDef sp name baseTy, st)
 
 -----------------------------------------------------------
 -- Expression Parser
@@ -1290,6 +1309,9 @@ pTopLevel st =
     TSchema => do
       (s, st') <- pSchema st
       Right (STLSchema s, st')
+    TNewtype => do
+      (n, st') <- pNewtypeDef st
+      Right (STLNewtype n, st')
     TSink => do
       -- Top-level sink: sink "file" tableExpr [partitionBy expr]
       let st' = advanceP st  -- skip 'sink'
@@ -1333,7 +1355,7 @@ pTopLevel st =
     TIdent "transform" => do
       (t, st') <- pLegacyTransform st
       Right (STLTransform t, st')
-    _ => Left (ParseError tok.span ("Expected 'schema', 'let', 'sink', 'main', or 'transform', got " ++ show tok.tok))
+    _ => Left (ParseError tok.span ("Expected 'schema', 'newtype', 'let', 'sink', 'main', or 'transform', got " ++ show tok.tok))
 
 -----------------------------------------------------------
 -- Program Parser
